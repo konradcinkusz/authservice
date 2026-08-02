@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: authservice
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - authservice-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  authservice:
+    build:
+      context: .
+      dockerfile: src/AuthService/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      DatabaseProvider: PostgreSQL
+      ConnectionStrings__DefaultConnection: "Host=postgres;Port=5432;Database=authservice;Username=postgres;Password=postgres"
+      # DEMO ONLY — generate your own secret for anything beyond local experimentation:
+      #   openssl rand -base64 48
+      Jwt__SecretKey: "demo-only-secret-key-change-me-please-32-chars-min"
+      Jwt__Issuer: AuthService
+      Jwt__Audience: AuthService
+      Cors__AllowedOrigins__0: "http://localhost:3000"
+      # Seeds a ready-to-use SuperAdmin on first startup (see DEMO.md).
+      InitialAdmin__Email: "admin@example.com"
+      InitialAdmin__Password: "Admin123!"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  authservice-db-data:

@@ -34,12 +34,28 @@ This is an auth service, not an application backend. It does not include billing
 subscription tiers, usage quotas, or any product-specific data (notes, messages, etc.).
 Build those as separate services that trust JWTs issued here.
 
+## Quick start (Docker Compose)
+
+The fastest way to see it working end-to-end — spins up PostgreSQL and the service
+together, with a demo JWT secret and a seeded `SuperAdmin` account:
+
+```bash
+docker compose up --build
+```
+
+Then follow [`DEMO.md`](DEMO.md) for a full `curl` walkthrough (register, login,
+create an organization, invite/accept a member, and query the admin API), or open
+http://localhost:8080/swagger to explore interactively. The secrets baked into
+`docker-compose.yml` are for local experimentation only — replace them for anything
+beyond your own machine.
+
 ## Getting started
 
 ### Prerequisites
 
 - [.NET 9 SDK](https://dotnet.microsoft.com/download)
 - PostgreSQL (default) or SQL Server
+- Docker + Docker Compose (only needed for the quick start above)
 
 ### Configuration
 
@@ -86,6 +102,10 @@ below) and seeds the `SuperAdmin` / `Admin` / `User` roles. Swagger UI is availa
 `/swagger`.
 
 ### Run with Docker
+
+`docker compose up --build` (see **Quick start** above) is the easiest path if you don't
+already have a database. To build and run the image standalone against your own
+database instead:
 
 ```bash
 docker build -f src/AuthService/Dockerfile -t authservice .
