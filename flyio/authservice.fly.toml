@@ -1,0 +1,37 @@
+# Fly.io configuration for AuthService.
+# Deployed by .github/workflows/flyio.yml on every v* tag push (i.e. every GitHub Release).
+app = "authservice"
+primary_region = "fra"
+
+[build]
+  dockerfile = "../src/AuthService/Dockerfile"
+
+[env]
+  ASPNETCORE_ENVIRONMENT = "Production"
+  ASPNETCORE_URLS = "http://+:8080"
+  DatabaseProvider = "PostgreSQL"
+  Jwt__Issuer = "AuthService"
+  Jwt__Audience = "AuthService"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "60s"
+  method = "GET"
+  path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

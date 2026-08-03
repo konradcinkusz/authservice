@@ -129,6 +129,60 @@ dotnet ef migrations add InitialCreate
 ...and switch `DatabaseProviderExtensions.InitializeDatabaseAsync` to call
 `context.Database.MigrateAsync()` instead of `EnsureCreatedAsync()`.
 
+## Deployment (Fly.io)
+
+`.github/workflows/flyio.yml` builds and deploys this service to
+[Fly.io](https://fly.io) automatically whenever a `v*` tag is pushed — which is exactly
+what happens when you **publish a GitHub Release** (create a release, set the tag to
+e.g. `v1.0.0`, publish). It can also be run manually from the Actions tab
+(`workflow_dispatch`).
+
+The workflow deploys two Fly apps, both idempotently created on first run:
+
+- `authservice-postgres` — a private PostgreSQL 16 instance (`flyio/postgres.fly.toml`),
+  reachable only from `authservice` over Fly's internal network.
+- `authservice` — the API itself (`flyio/authservice.fly.toml`), built from
+  `src/AuthService/Dockerfile` and pushed to `registry.fly.io/authservice`.
+
+### One-time setup
+
+1. [Create a Fly.io account](https://fly.io) and an organization (or use `personal`).
+2. Create a deploy token: `fly tokens create deploy`.
+3. In the repo, go to **Settings → Environments** and create an environment named
+   `production`.
+4. Add the secrets below under that environment.
+5. If the app names `authservice` / `authservice-postgres` are already taken on
+   Fly.io (they're global), change `APP_AUTHSERVICE` / `APP_POSTGRES` in
+   `.github/workflows/flyio.yml` and the matching `app = "..."` line in each
+   `flyio/*.fly.toml` file before your first deploy.
+
+### Required secrets (environment: `production`)
+
+| Secret | Required | Description | How to obtain |
+| --- | --- | --- | --- |
+| `FLY_API_TOKEN` | Yes | Fly.io deploy token used by the CI runner | `fly tokens create deploy` |
+| `POSTGRES_PASSWORD` | Yes | Password for the Fly Postgres app | Generate: `openssl rand -base64 24` |
+| `JWT_SECRET` | Yes | Symmetric signing key for access tokens (32+ chars) | Generate: `openssl rand -base64 32` |
+| `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | No | Enables Google login | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) |
+| `OAUTH_GITHUB_CLIENT_ID` / `OAUTH_GITHUB_CLIENT_SECRET` | No | Enables GitHub login | [GitHub OAuth Apps](https://github.com/settings/developers) |
+| `SENDGRID_API_KEY` / `SENDGRID_FROM_EMAIL` / `SENDGRID_FROM_NAME` | No | Enables real email delivery (password reset, invitations); logged only if unset | [SendGrid](https://sendgrid.com) |
+| `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` | No | Seeds a `SuperAdmin` account on first startup | Your choice |
+
+Optional repo/environment **variable**: `CORS_ALLOWED_ORIGIN` — the frontend origin
+allowed to call this API in production.
+
+### Releasing a deploy
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+...or use **Releases → Draft a new release** in the GitHub UI and publish it with a
+`v*` tag. Either triggers the workflow, which builds the image, deploys PostgreSQL
+(no-op if already running), then deploys `authservice` with the new image and pushes
+the configured secrets.
+
 ## API overview
 
 All endpoints are under `/api`. See `/swagger` for the full, generated reference.
