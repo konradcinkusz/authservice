@@ -1,0 +1,35 @@
+# Fly.io configuration for PostgreSQL 16 backing AuthService.
+#
+# PRIVATE — not exposed publicly. Reachable from the authservice app over Fly's
+# private 6PN network at:
+#   authservice-postgres.internal:5432
+#
+# Connection string (set as a Fly secret on the authservice app):
+#   Host=authservice-postgres.internal;Port=5432;Database=authservice;
+#   Username=authservice;Password=<POSTGRES_PASSWORD>;SSL Mode=Disable;Timeout=60
+
+app = "authservice-postgres"
+primary_region = "fra"
+
+[build]
+  # Pin to a specific major version to prevent unexpected restarts or data incompatibilities.
+  image = "postgres:16-alpine"
+
+[env]
+  # POSTGRES_PASSWORD is injected via Fly secrets.
+  POSTGRES_USER = "authservice"
+  POSTGRES_DB   = "authservice"
+  PGDATA = "/var/lib/postgresql/data/pgdata"
+  POSTGRES_INITDB_ARGS = "--encoding=UTF8 --locale=C"
+
+[[mounts]]
+  source       = "authservice_postgres_data"
+  destination  = "/var/lib/postgresql/data"
+  initial_size = "3gb"
+
+# No [http_service]/[[services]] block — PostgreSQL is reached directly over the
+# private network, avoiding Fly Proxy smoke checks unnecessary for a stateful DB.
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"
