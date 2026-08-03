@@ -1,8 +1,7 @@
 # Extraction notes
 
-This service was extracted from the `AureliusPromptus.AuthService` project in the
-[AureliusPromptus](https://github.com/konradcinkusz/aureliuspromptus) monorepo.
-`aureliuspromptus` itself was not modified — all work happened only in this repository.
+This service was extracted from the `AuthService` project in a larger private monorepo.
+The source monorepo itself was not modified — all work happened only in this repository.
 
 ## Was extraction feasible?
 

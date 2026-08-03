@@ -1,40 +1,43 @@
-# Tutorial: wdrożenie i integracja z `authservice`
+# Tutorial: deploying and integrating with `authservice`
 
-Ten dokument prowadzi krok po kroku przez cztery tematy:
+This document walks through four topics, step by step:
 
-1. jak uruchomić `authservice` lokalnie i wdrożyć je produkcyjnie (Fly.io),
-2. jak korzystać z jego API jako klient (rejestracja, logowanie, organizacje, panel admina),
-3. jak inne (zewnętrzne) aplikacje mogą wykorzystać `authservice` jako centralny serwis uwierzytelniania,
-4. jak działa gotowe demo z `DEMO.md`.
+1. how to run `authservice` locally and deploy it to production (Fly.io),
+2. how to use its API as a client (registration, login, organizations, admin panel),
+3. how other (external) applications can use `authservice` as a central authentication
+   service,
+4. how the ready-made demo from `DEMO.md` works.
 
-Zakłada podstawową znajomość Dockera i REST API. Wszystkie polecenia `curl` są gotowe do
-skopiowania.
-
----
-
-## 0. Czym jest authservice
-
-`authservice` to samodzielny mikroserwis uwierzytelniania i autoryzacji dla ASP.NET Core
-(.NET 9), który udostępnia:
-
-- konta użytkowników (rejestracja, logowanie, reset/zmiana hasła, soft-delete),
-- tokeny JWT (krótkotrwały access token + długożyjący, odwoływalny refresh token),
-- logowanie społecznościowe przez Google/GitHub (OAuth),
-- wielotenantowe **organizacje** z rolami `Owner` / `Admin` / `Member`, zaproszeniami e-mail,
-- API administracyjne (zarządzanie użytkownikami, rolami, blokadami),
-- śledzenie zgód (Terms/Privacy/Cookies) pod RODO,
-- PostgreSQL (domyślnie) lub SQL Server jako bazę danych.
-
-Serwis jest projektowany tak, by **inne aplikacje (frontend, backend, mikroserwisy) nie musiały
-same implementować logowania** — wystarczy, że zaufają tokenom JWT wystawianym przez ten serwis.
+It assumes basic familiarity with Docker and REST APIs. All `curl` commands are ready to
+copy and paste.
 
 ---
 
-## 1. Wdrożenie krok po kroku
+## 0. What is authservice
 
-### 1.1. Uruchomienie lokalne przez Docker Compose (najszybsza ścieżka)
+`authservice` is a standalone authentication and authorization microservice for
+ASP.NET Core (.NET 9) that provides:
 
-Wymagania: Docker + Docker Compose.
+- user accounts (registration, login, password reset/change, soft-delete),
+- JWT tokens (short-lived access token + long-lived, revocable refresh token),
+- social login via Google/GitHub (OAuth),
+- multi-tenant **organizations** with `Owner` / `Admin` / `Member` roles and email
+  invitations,
+- an admin API (user, role, and lockout management),
+- consent tracking (Terms/Privacy/Cookies) for GDPR compliance,
+- PostgreSQL (default) or SQL Server as the database.
+
+The service is designed so that **other applications (frontend, backend, microservices)
+don't have to implement login themselves** — they just need to trust the JWT tokens
+issued by this service.
+
+---
+
+## 1. Deployment, step by step
+
+### 1.1. Running locally with Docker Compose (fastest path)
+
+Requirements: Docker + Docker Compose.
 
 ```bash
 git clone https://github.com/konradcinkusz/authservice.git
@@ -42,34 +45,34 @@ cd authservice
 docker compose up --build
 ```
 
-`docker-compose.yml` uruchamia dwa kontenery:
+`docker-compose.yml` starts two containers:
 
-- `postgres` — baza PostgreSQL 16,
-- `authservice` — sam serwis, nasłuchujący na porcie `8080`.
+- `postgres` — a PostgreSQL 16 database,
+- `authservice` — the service itself, listening on port `8080`.
 
-Przy pierwszym starcie serwis:
+On first startup the service:
 
-- tworzy schemat bazy danych (`EnsureCreated`),
-- zasiewa role `SuperAdmin` / `Admin` / `User`,
-- ponieważ w `docker-compose.yml` ustawione są `InitialAdmin__Email` / `InitialAdmin__Password`,
-  tworzy od razu konto `SuperAdmin` (`admin@example.com` / `Admin123!`) — gotowe do zabawy z API
-  administracyjnym bez ręcznego nadawania ról.
+- creates the database schema (`EnsureCreated`),
+- seeds the `SuperAdmin` / `Admin` / `User` roles,
+- since `InitialAdmin__Email` / `InitialAdmin__Password` are set in `docker-compose.yml`,
+  immediately creates a `SuperAdmin` account (`admin@example.com` / `Admin123!`) —
+  ready to use with the admin API without manually assigning roles.
 
-Sprawdź, czy działa:
+Check that it's working:
 
 ```bash
 curl -s http://localhost:8080/health
 # {"status":"Healthy","service":"AuthService"}
 ```
 
-Interaktywna dokumentacja API (Swagger) jest dostępna pod `http://localhost:8080/swagger`.
+Interactive API documentation (Swagger) is available at `http://localhost:8080/swagger`.
 
-> Sekrety wpisane w `docker-compose.yml` (`Jwt__SecretKey` itd.) są **wyłącznie do lokalnych
-> eksperymentów** — nie używaj ich poza własną maszyną.
+> The secrets baked into `docker-compose.yml` (`Jwt__SecretKey` etc.) are for **local
+> experimentation only** — don't use them beyond your own machine.
 
-### 1.2. Uruchomienie lokalne bez Dockera (`dotnet run`)
+### 1.2. Running locally without Docker (`dotnet run`)
 
-Wymagania: .NET 9 SDK oraz działający PostgreSQL (lub SQL Server).
+Requirements: .NET 9 SDK and a running PostgreSQL (or SQL Server) instance.
 
 ```bash
 cd src/AuthService
@@ -81,20 +84,20 @@ dotnet restore
 dotnet run --project src/AuthService
 ```
 
-Minimalna konfiguracja, którą trzeba ustawić (przez `appsettings.json`, zmienne środowiskowe lub
-`dotnet user-secrets`):
+The minimum configuration you need to set (via `appsettings.json`, environment
+variables, or `dotnet user-secrets`):
 
-| Klucz | Opis |
+| Key | Description |
 | --- | --- |
-| `ConnectionStrings:DefaultConnection` | connection string do bazy |
-| `DatabaseProvider` | `PostgreSQL` (domyślnie) lub `SqlServer` |
-| `Jwt:SecretKey` | klucz symetryczny do podpisywania tokenów (min. 32 znaki) |
-| `Jwt:Issuer` / `Jwt:Audience` | domyślnie `AuthService` |
+| `ConnectionStrings:DefaultConnection` | database connection string |
+| `DatabaseProvider` | `PostgreSQL` (default) or `SqlServer` |
+| `Jwt:SecretKey` | symmetric key used to sign tokens (32+ characters) |
+| `Jwt:Issuer` / `Jwt:Audience` | default to `AuthService` |
 
-Opcjonalnie: `OAuth:Google:*`, `OAuth:GitHub:*`, `SendGrid:*`, `InitialAdmin:*`,
-`Cors:AllowedOrigins`, `ConsentVersions:*` — pełna lista w `README.md`.
+Optional: `OAuth:Google:*`, `OAuth:GitHub:*`, `SendGrid:*`, `InitialAdmin:*`,
+`Cors:AllowedOrigins`, `ConsentVersions:*` — full list in `README.md`.
 
-### 1.3. Budowanie i uruchamianie własnego obrazu Docker
+### 1.3. Building and running your own Docker image
 
 ```bash
 docker build -f src/AuthService/Dockerfile -t authservice .
@@ -104,106 +107,108 @@ docker run -p 8080:8080 \
   authservice
 ```
 
-### 1.4. Wdrożenie produkcyjne na Fly.io
+### 1.4. Production deployment on Fly.io
 
-Repozytorium ma gotowy pipeline CI/CD (`.github/workflows/flyio.yml`), który wdraża **dwie
-aplikacje Fly.io**:
+The repository ships with a ready-made CI/CD pipeline (`.github/workflows/flyio.yml`)
+that deploys **two Fly.io apps**:
 
-- `authservice-postgres` — prywatna instancja PostgreSQL 16, dostępna tylko z wewnętrznej sieci
-  Fly (`flyio/postgres.fly.toml`),
-- `authservice` — sam serwis, zbudowany z `src/AuthService/Dockerfile` i wypchnięty do
-  `registry.fly.io/authservice` (`flyio/authservice.fly.toml`).
+- `authservice-postgres` — a private PostgreSQL 16 instance, reachable only from Fly's
+  internal network (`flyio/postgres.fly.toml`),
+- `authservice` — the service itself, built from `src/AuthService/Dockerfile` and pushed
+  to `registry.fly.io/authservice` (`flyio/authservice.fly.toml`).
 
-Pipeline uruchamia się automatycznie po wypchnięciu tagu `v*` (czyli po opublikowaniu GitHub
-Release) albo ręcznie z zakładki Actions (`workflow_dispatch`).
+The pipeline runs automatically when a `v*` tag is pushed (i.e. when a GitHub Release is
+published), or manually from the Actions tab (`workflow_dispatch`).
 
-#### Krok 1 — konto i token Fly.io
+#### Step 1 — Fly.io account and token
 
-1. Załóż konto na [fly.io](https://fly.io) (i organizację, lub użyj `personal`).
-2. Zainstaluj `flyctl` i zaloguj się, a następnie wygeneruj token wdrożeniowy:
+1. Create an account at [fly.io](https://fly.io) (and an organization, or use
+   `personal`).
+2. Install `flyctl`, log in, then generate a deploy token:
 
    ```bash
    fly tokens create deploy
    ```
 
-#### Krok 2 — środowisko `production` w GitHub
+#### Step 2 — `production` environment in GitHub
 
-1. W repozytorium GitHub wejdź w **Settings → Environments** i utwórz środowisko o nazwie
-   `production`.
-2. Dodaj w nim poniższe **sekrety**:
+1. In the GitHub repository, go to **Settings → Environments** and create an
+   environment named `production`.
+2. Add the following **secrets** to it:
 
-   | Sekret | Wymagany | Opis | Skąd wziąć |
+   | Secret | Required | Description | Where to get it |
    | --- | --- | --- | --- |
-   | `FLY_API_TOKEN` | Tak | token wdrożeniowy Fly.io | `fly tokens create deploy` |
-   | `POSTGRES_PASSWORD` | Tak | hasło do bazy Postgres na Fly | `openssl rand -base64 24` |
-   | `JWT_SECRET` | Tak | klucz podpisujący JWT (min. 32 znaki) | `openssl rand -base64 32` |
-   | `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | Nie | logowanie przez Google | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) |
-   | `OAUTH_GITHUB_CLIENT_ID` / `OAUTH_GITHUB_CLIENT_SECRET` | Nie | logowanie przez GitHub | [GitHub OAuth Apps](https://github.com/settings/developers) |
-   | `SENDGRID_API_KEY` / `SENDGRID_FROM_EMAIL` / `SENDGRID_FROM_NAME` | Nie | realna wysyłka e-maili (reset hasła, zaproszenia) | [SendGrid](https://sendgrid.com) |
-   | `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` | Nie | zasiewa konto `SuperAdmin` przy pierwszym starcie | dowolne |
+   | `FLY_API_TOKEN` | Yes | Fly.io deploy token | `fly tokens create deploy` |
+   | `POSTGRES_PASSWORD` | Yes | password for the Postgres database on Fly | `openssl rand -base64 24` |
+   | `JWT_SECRET` | Yes | symmetric key used to sign JWTs (32+ characters) | `openssl rand -base64 32` |
+   | `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | No | Google login | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) |
+   | `OAUTH_GITHUB_CLIENT_ID` / `OAUTH_GITHUB_CLIENT_SECRET` | No | GitHub login | [GitHub OAuth Apps](https://github.com/settings/developers) |
+   | `SENDGRID_API_KEY` / `SENDGRID_FROM_EMAIL` / `SENDGRID_FROM_NAME` | No | real email delivery (password reset, invitations) | [SendGrid](https://sendgrid.com) |
+   | `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` | No | seeds a `SuperAdmin` account on first startup | any |
 
-   Opcjonalna **zmienna** repo/środowiska: `CORS_ALLOWED_ORIGIN` — origin frontendu, który ma
-   mieć dostęp do API w produkcji.
+   Optional repo/environment **variable**: `CORS_ALLOWED_ORIGIN` — the frontend origin
+   allowed to access the API in production.
 
-3. Nazwy aplikacji `authservice` / `authservice-postgres` są **globalne na Fly.io** — jeśli są
-   zajęte, zmień `APP_AUTHSERVICE` / `APP_POSTGRES` w `.github/workflows/flyio.yml` oraz
-   odpowiadające im linie `app = "..."` w plikach `flyio/*.fly.toml`, zanim wykonasz pierwsze
-   wdrożenie.
+3. The app names `authservice` / `authservice-postgres` are **global on Fly.io** — if
+   they're already taken, change `APP_AUTHSERVICE` / `APP_POSTGRES` in
+   `.github/workflows/flyio.yml` and the corresponding `app = "..."` lines in
+   `flyio/*.fly.toml` before your first deploy.
 
-#### Krok 3 — wypchnięcie wdrożenia
+#### Step 3 — trigger a deployment
 
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-Albo z UI GitHuba: **Releases → Draft a new release**, ustaw tag `v*` i opublikuj.
+Or from the GitHub UI: **Releases → Draft a new release**, set a `v*` tag, and publish.
 
-Kolejność zadań w pipeline:
+Job order in the pipeline:
 
 ```
 deploy-postgres ──┐
 build             ──┴──▶ deploy-authservice
 ```
 
-1. `deploy-postgres` — idempotentnie tworzy aplikację i wolumin Postgresa na Fly (jeśli już
-   istnieją, pomija ten krok), ustawia hasło i wdraża bazę.
-2. `build` — buduje obraz z `src/AuthService/Dockerfile` i wypycha go do
-   `registry.fly.io/authservice` (równolegle z krokiem 1).
-3. `deploy-authservice` — ustawia sekrety serwisu (`Jwt__SecretKey`, connection string do
-   wewnętrznego hosta `authservice-postgres.internal`, OAuth, SendGrid, `InitialAdmin`,
-   `Cors__AllowedOrigins__0`) i wdraża serwis pod zbudowanym obrazem.
+1. `deploy-postgres` — idempotently creates the Postgres app and volume on Fly (skips
+   this step if they already exist), sets the password, and deploys the database.
+2. `build` — builds the image from `src/AuthService/Dockerfile` and pushes it to
+   `registry.fly.io/authservice` (runs in parallel with step 1).
+3. `deploy-authservice` — sets the service secrets (`Jwt__SecretKey`, the connection
+   string to the internal host `authservice-postgres.internal`, OAuth, SendGrid,
+   `InitialAdmin`, `Cors__AllowedOrigins__0`) and deploys the service using the built
+   image.
 
-Po zakończeniu serwis jest dostępny pod `https://authservice.fly.dev` (lub inną nazwą, jeśli
-zmieniono `APP_AUTHSERVICE`).
+Once finished, the service is available at `https://authservice.fly.dev` (or another
+name, if `APP_AUTHSERVICE` was changed).
 
-#### Kolejne wdrożenia
+#### Subsequent deployments
 
-Każdy kolejny tag `v*` powtarza cały proces — wdrożenie Postgresa jest no-opem, jeśli baza już
-istnieje, a serwis dostaje nowy obraz.
+Every additional `v*` tag repeats the whole process — the Postgres deployment is a
+no-op if the database already exists, and the service gets a new image.
 
-### 1.5. Schemat bazy danych
+### 1.5. Database schema
 
-Repozytorium **nie zawiera** wersjonowanych migracji EF Core — przy starcie wywoływane jest
-`EnsureCreated`, żeby serwis dało się uruchomić od zera na obu wspieranych bazach. Jeśli
-potrzebujesz migracji do środowiska produkcyjnego z ewoluującym schematem:
+The repository **does not include** versioned EF Core migrations — `EnsureCreated` is
+called on startup so the service can be started from scratch on either supported
+database. If you need migrations for a production environment with an evolving schema:
 
 ```bash
 cd src/AuthService
 dotnet ef migrations add InitialCreate
 ```
 
-...i zmień `DatabaseProviderExtensions.InitializeDatabaseAsync`, żeby wywoływał
-`context.Database.MigrateAsync()` zamiast `EnsureCreatedAsync()`.
+...and change `DatabaseProviderExtensions.InitializeDatabaseAsync` to call
+`context.Database.MigrateAsync()` instead of `EnsureCreatedAsync()`.
 
 ---
 
-## 2. Jak korzystać z authservice jako klient API
+## 2. Using authservice as an API client
 
-Wszystkie endpointy są pod prefiksem `/api`, pełna referencja generowana jest w
-`/swagger`. Poniżej najważniejsze grupy.
+All endpoints are under the `/api` prefix, with a full reference generated at
+`/swagger`. Below are the most important groups.
 
-### 2.1. Rejestracja i logowanie
+### 2.1. Registration and login
 
 ```bash
 curl -s -X POST http://localhost:8080/api/auth/register \
@@ -216,11 +221,11 @@ curl -s -X POST http://localhost:8080/api/auth/register \
   }'
 ```
 
-`acceptedTermsVersion` / `acceptedPrivacyVersion` muszą dokładnie odpowiadać wartościom z
-`ConsentVersions` w konfiguracji serwisu — inaczej rejestracja zostanie odrzucona. Odpowiedź
-zawiera `accessToken`, `refreshToken` i `expiresIn`.
+`acceptedTermsVersion` / `acceptedPrivacyVersion` must exactly match the values from
+`ConsentVersions` in the service configuration — otherwise registration is rejected.
+The response contains `accessToken`, `refreshToken`, and `expiresIn`.
 
-Logowanie:
+Login:
 
 ```bash
 curl -s -X POST http://localhost:8080/api/auth/login \
@@ -228,7 +233,7 @@ curl -s -X POST http://localhost:8080/api/auth/login \
   -d '{"email": "alice@example.com", "password": "Password123!"}'
 ```
 
-Odświeżenie tokenu (stary refresh token zostaje odwołany, dostajesz nową parę):
+Refreshing a token (the old refresh token is revoked, you get a new pair):
 
 ```bash
 curl -s -X POST http://localhost:8080/api/auth/refresh \
@@ -236,112 +241,115 @@ curl -s -X POST http://localhost:8080/api/auth/refresh \
   -d '{"refreshToken": "<refresh-token>"}'
 ```
 
-Wylogowanie (`POST /api/auth/logout`) odwołuje aktywne refresh tokeny użytkownika.
+Logout (`POST /api/auth/logout`) revokes the user's active refresh tokens.
 
-### 2.2. Wywołania autoryzowane
+### 2.2. Authorized calls
 
-Access token przekazujesz w nagłówku `Authorization: Bearer <token>`:
+Pass the access token in the `Authorization: Bearer <token>` header:
 
 ```bash
 curl -s http://localhost:8080/api/auth/me \
   -H "Authorization: Bearer $ALICE_TOKEN"
 ```
 
-Inne endpointy konta: `PUT /api/auth/profile`, `POST /api/auth/change-password`,
-`POST /api/auth/forgot-password` / `/reset-password`, `DELETE /api/auth/account` (soft-delete),
-`GET/POST /api/auth/consents`.
+Other account endpoints: `PUT /api/auth/profile`, `POST /api/auth/change-password`,
+`POST /api/auth/forgot-password` / `/reset-password`, `DELETE /api/auth/account`
+(soft-delete), `GET/POST /api/auth/consents`.
 
-### 2.3. Logowanie społecznościowe (OAuth)
+### 2.3. Social login (OAuth)
 
 ```
 GET /api/external-auth/login?provider=Google|GitHub&returnUrl=<frontend-url>
-GET /api/external-auth/callback   (wywoływane przez dostawcę OAuth)
-GET /api/external-auth/providers  (lista aktywnych dostawców)
+GET /api/external-auth/callback   (invoked by the OAuth provider)
+GET /api/external-auth/providers  (list of active providers)
 ```
 
-Frontend przekierowuje użytkownika na `/api/external-auth/login?provider=Google`, serwis
-prowadzi cały handshake OAuth, a na końcu przekierowuje z powrotem na `returnUrl` z tokenami
-JWT doklejonymi jako parametry query (`accessToken`, `refreshToken`, `expiresIn`). `returnUrl`
-jest walidowany względem `OAuth:PostLoginRedirectBaseUrl` / `OAuth:PostLoginRedirectAllowedBaseUrls`,
-żeby nie dało się przekierować tokenów na obcy serwer (ochrona przed open-redirect).
+The frontend redirects the user to `/api/external-auth/login?provider=Google`, the
+service drives the whole OAuth handshake, and finally redirects back to `returnUrl` with
+JWT tokens appended as query parameters (`accessToken`, `refreshToken`, `expiresIn`).
+`returnUrl` is validated against `OAuth:PostLoginRedirectBaseUrl` /
+`OAuth:PostLoginRedirectAllowedBaseUrls`, so tokens can't be redirected to an untrusted
+server (open-redirect protection).
 
-### 2.4. Organizacje (multi-tenant)
+### 2.4. Organizations (multi-tenant)
 
 ```bash
-# utworzenie organizacji
+# create an organization
 curl -s -X POST http://localhost:8080/api/organizations \
   -H "Authorization: Bearer $ALICE_TOKEN" -H "Content-Type: application/json" \
   -d '{"name": "Acme Inc", "description": "Demo organization"}'
 
-# zaproszenie członka (rola Owner/Admin/Member)
+# invite a member (role Owner/Admin/Member)
 curl -s -X POST "http://localhost:8080/api/organizations/$ORG_ID/invite" \
   -H "Authorization: Bearer $ALICE_TOKEN" -H "Content-Type: application/json" \
   -d '{"email": "bob@example.com", "role": "Member"}'
 
-# akceptacja zaproszenia przez zaproszonego użytkownika
+# the invited user accepts the invitation
 curl -s -X POST http://localhost:8080/api/organizations/invitations/accept \
   -H "Authorization: Bearer $BOB_TOKEN" -H "Content-Type: application/json" \
   -d '{"token": "<invite-token>"}'
 ```
 
-Pozostałe: `GET/PUT/DELETE /api/organizations/{id}`, `GET /api/organizations/invitations`,
-`DELETE /api/organizations/{id}/members/{userId}` / `/members/me`, `POST .../restore`.
+Others: `GET/PUT/DELETE /api/organizations/{id}`, `GET /api/organizations/invitations`,
+`DELETE /api/organizations/{id}/members/{userId}` / `/members/me`,
+`POST .../restore`.
 
-### 2.5. API administracyjne
+### 2.5. Admin API
 
-Wymaga roli `Admin` lub `SuperAdmin`:
+Requires the `Admin` or `SuperAdmin` role:
 
 ```bash
 curl -s http://localhost:8080/api/admin/stats -H "Authorization: Bearer $ADMIN_TOKEN"
 curl -s http://localhost:8080/api/admin/users -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-Dalej: `GET /api/admin/users/{userId}`, `/users/deleted`, `POST /api/admin/users/{userId}/roles`,
-`/unlock`, `/restore`.
+Also available: `GET /api/admin/users/{userId}`, `/users/deleted`,
+`POST /api/admin/users/{userId}/roles`, `/unlock`, `/restore`.
 
 ---
 
-## 3. Jak zewnętrzne aplikacje mogą wykorzystać authservice
+## 3. How external applications can use authservice
 
-`authservice` jest pomyślany jako **centralny dostawca tożsamości** dla ekosystemu innych
-usług — frontendów i backendów, które same nie implementują logowania.
+`authservice` is meant to act as a **central identity provider** for an ecosystem of
+other services — frontends and backends that don't implement login themselves.
 
-### 3.1. Model integracji
+### 3.1. Integration model
 
-1. Frontend (SPA/mobile) rozmawia z `authservice` bezpośrednio: rejestracja, logowanie, OAuth,
-   odświeżanie tokenów. Przechowuje `accessToken` (krótkotrwały) i `refreshToken`
-   (długożyjący, do odświeżania).
-2. Frontend dołącza `accessToken` jako `Authorization: Bearer <token>` do wywołań **innych**
-   usług backendowych (Twojego właściwego produktu/API).
-3. **Te inne usługi nie muszą wywoływać z powrotem authservice**, żeby zweryfikować token —
-   wystarczy, że znają ten sam `Jwt:SecretKey`, `Jwt:Issuer` i `Jwt:Audience` i lokalnie
-   zweryfikują podpis JWT (standardowy middleware JWT Bearer, dostępny w praktycznie każdym
-   frameworku: ASP.NET Core, Express + `jsonwebtoken`, FastAPI + `python-jose`, Spring Security
-   itd.).
+1. The frontend (SPA/mobile) talks to `authservice` directly: registration, login,
+   OAuth, token refresh. It stores the `accessToken` (short-lived) and `refreshToken`
+   (long-lived, used to refresh).
+2. The frontend attaches the `accessToken` as `Authorization: Bearer <token>` to calls
+   to **other** backend services (your actual product/API).
+3. **Those other services don't need to call back into authservice** to validate the
+   token — they just need to know the same `Jwt:SecretKey`, `Jwt:Issuer`, and
+   `Jwt:Audience` and verify the JWT signature locally (a standard JWT Bearer
+   middleware, available in practically every framework: ASP.NET Core, Express +
+   `jsonwebtoken`, FastAPI + `python-jose`, Spring Security, etc.).
 
-To sprawia, że autoryzacja jest **bezstanowa i szybka** — usługi produktowe nie muszą pytać
-authservice przy każdym żądaniu, tylko raz zweryfikować podpis lokalnie.
+This makes authorization **stateless and fast** — product services don't need to ask
+authservice on every request, only verify the signature locally once.
 
-### 3.2. Co jest w tokenie (claims)
+### 3.2. What's in the token (claims)
 
-Access token wystawiany przez `TokenService` zawiera m.in.:
+The access token issued by `TokenService` contains, among others:
 
-| Claim | Znaczenie |
+| Claim | Meaning |
 | --- | --- |
-| `sub` / `ClaimTypes.NameIdentifier` | ID użytkownika |
-| `email` | e-mail użytkownika |
-| `ClaimTypes.Name` | nazwa użytkownika |
-| `ClaimTypes.Role` | role globalne (`User`, `Admin`, `SuperAdmin`) — może wystąpić wielokrotnie |
-| `organization` | ID organizacji, do której użytkownik należy — osobny claim na każdą organizację |
-| `organization:{orgId}:role` | rola użytkownika w danej organizacji (`Owner`/`Admin`/`Member`) |
+| `sub` / `ClaimTypes.NameIdentifier` | user ID |
+| `email` | user's email |
+| `ClaimTypes.Name` | username |
+| `ClaimTypes.Role` | global roles (`User`, `Admin`, `SuperAdmin`) — may occur multiple times |
+| `organization` | ID of an organization the user belongs to — a separate claim per organization |
+| `organization:{orgId}:role` | the user's role in that organization (`Owner`/`Admin`/`Member`) |
 
-Dzięki temu zewnętrzna usługa może np. sprawdzić „czy ten użytkownik jest `Owner` w organizacji
-X” bez żadnego dodatkowego zapytania sieciowego — wystarczy odczytać claimy z tokenu.
+This lets an external service check, for example, "is this user an `Owner` in
+organization X" without any extra network call — it just reads the claims from the
+token.
 
-### 3.3. Przykład: weryfikacja JWT w innej usłudze ASP.NET Core
+### 3.3. Example: verifying a JWT in another ASP.NET Core service
 
 ```csharp
-// Program.cs innej usługi — te same wartości co w authservice
+// Program.cs of another service — same values as in authservice
 var jwtSecretKey = builder.Configuration["Jwt:SecretKey"];
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "AuthService";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "AuthService";
@@ -363,94 +371,98 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 ```
 
-Ta konfiguracja jest identyczna z tą w `src/AuthService/Program.cs` — wystarczy podać ten sam
-sekret, issuer i audience jako zmienne środowiskowe innej usługi (np. `Jwt__SecretKey`), żeby
-zaczęła akceptować tokeny wystawione przez `authservice`, bez znajomości bazy danych ani
-żadnego wywołania sieciowego do authservice.
+This configuration is identical to the one in `src/AuthService/Program.cs` — just
+provide the same secret, issuer, and audience as environment variables in the other
+service (e.g. `Jwt__SecretKey`) and it will start accepting tokens issued by
+`authservice`, without knowing anything about the database or making any network call
+to authservice.
 
-Dla usług w innych technologiach zasada jest taka sama: dowolna biblioteka JWT (HS256, klucz
-symetryczny) zweryfikuje token, o ile zna ten sam `SecretKey`/`Issuer`/`Audience`.
+For services in other tech stacks, the principle is the same: any JWT library (HS256,
+symmetric key) will verify the token as long as it knows the same
+`SecretKey`/`Issuer`/`Audience`.
 
-### 3.4. Konfiguracja CORS dla frontendów
+### 3.4. CORS configuration for frontends
 
-Jeśli frontend woła authservice bezpośrednio z przeglądarki, jego origin musi być wpisany w
-`Cors:AllowedOrigins` (lokalnie) lub w zmienną `CORS_ALLOWED_ORIGIN` (Fly.io/produkcja).
+If a frontend calls authservice directly from the browser, its origin must be listed in
+`Cors:AllowedOrigins` (locally) or the `CORS_ALLOWED_ORIGIN` variable (Fly.io/
+production).
 
 ### 3.5. Rate limiting
 
-Endpointy uwierzytelniające (`login`, `register`, `refresh`) są ograniczone do 20 żądań/minutę
-na adres IP, pozostałe API — do 200 żądań/minutę na użytkownika (lub IP dla niezalogowanych).
-Integrujące się aplikacje powinny obsłużyć `429 Too Many Requests` z polem `retryAfter`.
+Authentication endpoints (`login`, `register`, `refresh`) are limited to 20
+requests/minute per IP address; other API endpoints are limited to 200 requests/minute
+per user (or per IP for anonymous requests). Integrating applications should handle
+`429 Too Many Requests` responses with a `retryAfter` field.
 
 ---
 
-## 4. Jak działa demo (`DEMO.md`)
+## 4. How the demo works (`DEMO.md`)
 
-Gotowe demo pokazuje pełny cykl życia: od rejestracji, przez organizacje, po panel admina —
-wszystko przez `curl` na stosie z Docker Compose.
+The ready-made demo shows a full lifecycle: from registration, through organizations, to
+the admin panel — all via `curl` against the Docker Compose stack.
 
-### Krok po kroku
+### Step by step
 
-1. **Start stosu**:
+1. **Start the stack**:
 
    ```bash
    docker compose up --build -d
-   docker compose logs -f authservice   # obserwuj start, aż zobaczysz "Now listening on..."
+   docker compose logs -f authservice   # watch startup until you see "Now listening on..."
    ```
 
-   Przy pierwszym uruchomieniu seedowane są role oraz konto `SuperAdmin`
-   (`admin@example.com` / `Admin123!`), bo `InitialAdmin__Email/Password` są ustawione w
-   `docker-compose.yml`.
+   On first startup, roles and the `SuperAdmin` account
+   (`admin@example.com` / `Admin123!`) are seeded, because `InitialAdmin__Email/Password`
+   are set in `docker-compose.yml`.
 
-2. **Rejestracja Alice** — `POST /api/auth/register`, wynik zapisywany do pliku, a
-   `accessToken` wyciągany do zmiennej `ALICE_TOKEN` (demo używa `jq`).
+2. **Register Alice** — `POST /api/auth/register`, the result is saved to a file, and
+   `accessToken` is extracted into the `ALICE_TOKEN` variable (the demo uses `jq`).
 
-3. **Pobranie profilu** — `GET /api/auth/me` z tokenem Alice.
+3. **Fetch the profile** — `GET /api/auth/me` with Alice's token.
 
-4. **Utworzenie organizacji** — `POST /api/organizations` jako Alice; `ORG_ID` zapisywany do
-   zmiennej.
+4. **Create an organization** — `POST /api/organizations` as Alice; `ORG_ID` is saved
+   into a variable.
 
-5. **Zaproszenie drugiego użytkownika (Bob)** — `POST /api/organizations/{id}/invite`. Ponieważ
-   w demo nie skonfigurowano dostawcy e-mail (SendGrid), zaproszenie **nie jest realnie
-   wysyłane** — serwis loguje ostrzeżenie zawierające token zaproszenia:
+5. **Invite a second user (Bob)** — `POST /api/organizations/{id}/invite`. Since no
+   email provider (SendGrid) is configured in the demo, the invitation **isn't actually
+   sent** — the service logs a warning containing the invitation token:
 
    ```bash
    docker compose logs authservice | grep "Invitation token:" | tail -1
    ```
 
-   Token trzeba ręcznie skopiować z logu.
+   The token needs to be copied manually from the log.
 
-6. **Rejestracja Boba i akceptacja zaproszenia** — Bob musi zarejestrować się na **ten sam
-   e-mail**, na który zaproszenie zostało wysłane, a następnie wywołać
-   `POST /api/organizations/invitations/accept` ze skopiowanym tokenem.
+6. **Register Bob and accept the invitation** — Bob must register with the **same
+   email** the invitation was sent to, then call
+   `POST /api/organizations/invitations/accept` with the copied token.
 
-7. **Weryfikacja członkostwa** — `GET /api/organizations/{id}` jako Alice, sprawdzenie pola
-   `members` — Bob powinien się tam pojawić.
+7. **Verify membership** — `GET /api/organizations/{id}` as Alice, checking the
+   `members` field — Bob should appear there.
 
-8. **Panel admina** — logowanie jako seedowany `SuperAdmin`, a następnie
-   `GET /api/admin/stats` i `GET /api/admin/users` pokazują dane na poziomie administratora.
+8. **Admin panel** — log in as the seeded `SuperAdmin`, then
+   `GET /api/admin/stats` and `GET /api/admin/users` show admin-level data.
 
-### Zakończenie demo
+### Ending the demo
 
 ```bash
-docker compose down -v   # -v usuwa też wolumin Postgresa, czyszcząc dane demo
+docker compose down -v   # -v also removes the Postgres volume, wiping demo data
 ```
 
-Demo celowo nie konfiguruje SendGrid ani OAuth, żeby dało się je uruchomić offline, w pełni
-lokalnie, bez żadnych zewnętrznych kont — jedyny „obejście” to ręczne czytanie tokenu
-zaproszenia z logów zamiast z e-maila.
+The demo deliberately doesn't configure SendGrid or OAuth, so it can run offline, fully
+locally, without any external accounts — the only "workaround" is reading the invitation
+token manually from the logs instead of an email.
 
 ---
 
-## 5. Testy
+## 5. Tests
 
 ```bash
 dotnet test
 ```
 
-## 6. Dalsza lektura
+## 6. Further reading
 
-- [`README.md`](README.md) — pełna referencja konfiguracji i API.
-- [`DEMO.md`](DEMO.md) — surowy skrypt demo opisany w sekcji 4.
-- [`EXTRACTION.md`](EXTRACTION.md) — historia i uzasadnienie wydzielenia tego serwisu z
-  większego projektu, co zostało zachowane, a co świadomie pominięte.
+- [`README.md`](README.md) — full configuration and API reference.
+- [`DEMO.md`](DEMO.md) — the raw demo script described in section 4.
+- [`EXTRACTION.md`](EXTRACTION.md) — the history and rationale behind extracting this
+  service from a larger project, what was kept, and what was intentionally dropped.

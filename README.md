@@ -5,10 +5,10 @@ JWT access/refresh tokens, social login (Google/GitHub), and multi-tenant organi
 with role-based membership. Bring it up as its own microservice and point any frontend
 or backend at it over HTTP.
 
-This project started as an extraction of the `AuthService` module from a larger product
-(AureliusPromptus). Everything specific to that product — billing/subscriptions, usage
-quotas, in-app announcements, and other product features — was intentionally left behind
-so this repository stays generically useful. See [`EXTRACTION.md`](EXTRACTION.md) for the
+This project started as an extraction of the `AuthService` module from a larger private
+product. Everything specific to that product — billing/subscriptions, usage quotas,
+in-app announcements, and other product features — was intentionally left behind so this
+repository stays generically useful. See [`EXTRACTION.md`](EXTRACTION.md) for the
 detailed rationale and what was kept vs. dropped.
 
 ## Features
