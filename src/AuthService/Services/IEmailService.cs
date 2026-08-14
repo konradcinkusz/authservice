@@ -35,4 +35,20 @@ public interface IEmailService
     /// <param name="toEmail">Recipient email address</param>
     /// <param name="userName">Display name used in the greeting</param>
     Task SendWelcomeEmailAsync(string toEmail, string userName);
+
+    /// <summary>
+    /// Sends an address-verification email for a newly registered account
+    /// </summary>
+    /// <param name="toEmail">Recipient email address</param>
+    /// <param name="verificationToken">Identity-generated email confirmation token</param>
+    /// <param name="verificationUrl">Full frontend URL that completes the verification</param>
+    Task SendEmailVerificationAsync(string toEmail, string verificationToken, string verificationUrl);
 }
+
+/// <summary>
+/// Whether this deployment can actually deliver email. Registered as a singleton alongside
+/// the chosen <see cref="IEmailService"/> so features that are meaningless without delivery
+/// (email verification above all) can default themselves off instead of locking users out.
+/// </summary>
+/// <param name="CanSendEmail">True when a real email provider is configured.</param>
+public record EmailCapabilities(bool CanSendEmail);

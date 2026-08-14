@@ -13,20 +13,28 @@ detailed rationale and what was kept vs. dropped.
 
 ## Features
 
-- **User accounts**: registration, login, password reset, change password, soft-delete
-  with a retention period.
-- **JWT authentication**: short-lived access tokens plus long-lived, revocable refresh
-  tokens stored server-side.
+- **User accounts**: registration, login, email verification, password reset, change
+  password, soft-delete with a retention period.
+- **JWT authentication**: short-lived access tokens plus rotating refresh tokens, stored
+  as hashes, with replay detection that kills the whole rotation family.
+- **Two-factor authentication**: TOTP with recovery codes, on top of ASP.NET Core Identity's
+  own primitives.
 - **OAuth social login**: Google and GitHub out of the box (only enabled when credentials
-  are configured — the service starts fine without them).
+  are configured — the service starts fine without them). Linking requires a
+  provider-verified email address, and the callback hands back a single-use exchange code
+  rather than putting tokens in a URL.
 - **Organizations**: multi-tenant grouping with `Owner` / `Admin` / `Member` roles,
-  email invitations with retry tracking, and soft-delete/restore.
-- **Admin API**: paginated user/organization listing, role management, account lockout
-  and restore, protected by `Admin`/`SuperAdmin` roles.
-- **Consent tracking**: versioned Terms/Privacy/Cookie acceptance records for GDPR-style
-  accountability.
+  email invitations with retry tracking, ownership transfer, and soft-delete/restore.
+  The permission matrix is documented in [`docs/roles.md`](docs/roles.md).
+- **Admin API**: paginated user/organization listing, role management, lock/unlock,
+  force-logout, soft-delete/restore, protected by `Admin`/`SuperAdmin` roles.
+- **Audit log**: a queryable, append-only record of security-relevant actions — who
+  granted a role, who locked an account, and when.
+- **Consent tracking and data export**: versioned Terms/Privacy/Cookie acceptance records,
+  plus a self-service export endpoint (GDPR Art. 15/20) matching the existing erasure flow.
 - **Dual database support**: PostgreSQL (default) or SQL Server, selected by configuration.
-- **Rate limiting**, CORS, and Swagger/OpenAPI with JWT bearer auth built in.
+- **Rate limiting** (with a configurable proxy trust boundary), CORS, and Swagger/OpenAPI
+  with JWT bearer auth built in.
 
 ## What's intentionally *not* here
 
@@ -69,6 +77,9 @@ Configuration is standard ASP.NET Core (`appsettings.json`, environment variable
 | `Jwt:SecretKey` | Symmetric signing key for access tokens (32+ chars) |
 | `Jwt:Issuer` / `Jwt:Audience` | JWT issuer/audience, defaults to `AuthService` |
 
+The service fails to start, with a message naming the setting, if the connection string is
+missing or `Jwt:SecretKey` is missing or shorter than 32 bytes.
+
 Optional:
 
 | Key | Description |
@@ -82,6 +93,27 @@ Optional:
 | `InitialAdmin:Email` / `Password` | Seeds a `SuperAdmin` account on first startup |
 | `Cors:AllowedOrigins` | Array of allowed frontend origins |
 | `ConsentVersions:Terms` / `Privacy` / `Cookies` | Legal document versions users must accept |
+| `Jwt:ExpirationMinutes` / `Jwt:RefreshTokenDays` | Token lifetimes (default 60 minutes / 7 days) |
+| `Database:SchemaMode` | `EnsureCreated` (default), `Migrate`, or `None` — see [Database schema](#database-schema) |
+| `Database:MigrationsAssembly` | Assembly holding migrations when `SchemaMode=Migrate` |
+| `Swagger:Enabled` | Serve Swagger UI. Defaults to on in Development, off elsewhere |
+
+### Security-relevant settings
+
+These change what the service allows. All default to the safe value; the service logs the
+posture it started with, and warns when one of the escape hatches is enabled.
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `Auth:RequireConfirmedEmail` | auto | Whether an unverified address may sign in or accept invitations. "Auto" means on exactly when email delivery is configured, so the zero-config quick start is not locked out of itself. |
+| `Auth:RequireVerifiedProviderEmail` | `true` | Require an OAuth provider to assert it verified the address before linking it to a local account. Turning this off reopens a known account-takeover path. |
+| `Auth:AllowTokensInOAuthRedirect` | `false` | Put tokens in the OAuth redirect URL instead of returning a single-use exchange code. For frontends mid-migration only. |
+| `Auth:RevokeSessionsOnPasswordChange` | `true` | End all sessions when a password changes. |
+| `Auth:ReissueTokensOnPasswordChange` | `true` | Return a fresh token pair so the device that changed the password stays signed in. |
+| `Network:ClientIpHeader` | *(none)* | Platform header carrying the real client IP (`Fly-Client-IP`, `CF-Connecting-IP`). Preferred over `X-Forwarded-For`, which clients can forge. |
+| `Network:KnownProxies` / `KnownNetworks` | *(empty)* | Proxy IPs / CIDRs whose `X-Forwarded-*` headers are trusted. |
+| `Network:ForwardLimit` | `1` | Proxy hops to walk back through. |
+| `Network:TrustAllProxies` | `false` | Accept `X-Forwarded-For` from anyone. Only safe when the app is unreachable except through a trusted proxy — otherwise per-IP rate limiting can be bypassed by sending a new header value per request. |
 
 Example for local development with `dotnet user-secrets` (run from `src/AuthService`):
 
@@ -117,17 +149,32 @@ docker run -p 8080:8080 \
 
 ### Database schema
 
-This repository ships without versioned EF Core migrations so it can bootstrap cleanly
-against either supported provider (`EnsureCreated` runs at startup). If you need
-migration-based schema evolution for a production deployment:
+`Database:SchemaMode` chooses how the schema is created at startup:
+
+| Mode | Behaviour | Use for |
+| --- | --- | --- |
+| `EnsureCreated` (default) | Creates the schema when the database is empty; **does nothing at all when it is not**. | Demos, development, tests |
+| `Migrate` | Applies EF Core migrations from `Database:MigrationsAssembly`. | Production |
+| `None` | Nothing — schema applied out of band. | DBA- or job-managed deployments |
+
+`EnsureCreated` is a bootstrap, not an upgrade path: against an existing database it will not
+add columns introduced since it first ran, and the app then fails at runtime against a stale
+schema. The service logs a warning on every startup where this happens.
+
+Migrations are not committed, because one migration set cannot serve both PostgreSQL and SQL
+Server — the generated DDL and the filtered-index expressions differ. Generate a set per
+provider; a design-time factory is included so no database is needed:
 
 ```bash
-cd src/AuthService
-dotnet ef migrations add InitialCreate
+DATABASE_PROVIDER=PostgreSQL \
+Database__MigrationsAssembly=AuthService.Migrations.PostgreSQL \
+dotnet ef migrations add InitialCreate \
+  --project src/AuthService.Migrations.PostgreSQL \
+  --startup-project src/AuthService
 ```
 
-...and switch `DatabaseProviderExtensions.InitializeDatabaseAsync` to call
-`context.Database.MigrateAsync()` instead of `EnsureCreatedAsync()`.
+Full procedure, and idempotent upgrade DDL for existing deployments, in
+[`docs/schema/README.md`](docs/schema/README.md).
 
 ## Deployment (Fly.io)
 
@@ -224,29 +271,56 @@ on GitHub and set visibility to Public, or every consumer will need its own
 
 ## API overview
 
-All endpoints are under `/api`. See `/swagger` for the full, generated reference.
+Endpoints are served at `/api/v1/...`. The unversioned `/api/...` path is kept as an alias
+for the pre-v1 contract; prefer `/api/v1`. See `/swagger` for the full, generated reference.
 
-- `POST /api/auth/register`, `/login`, `/refresh`, `/logout`
-- `GET/POST /api/auth/consents`, `PUT /api/auth/profile`
-- `POST /api/auth/forgot-password`, `/reset-password`, `/change-password`
-- `DELETE /api/auth/account`
-- `GET /api/external-auth/login?provider=Google|GitHub`, `/callback`, `/providers`
-- `GET/POST /api/organizations`, `GET/PUT/DELETE /api/organizations/{id}`
-- `POST /api/organizations/{id}/invite`, `/restore`
-- `POST /api/organizations/invitations/accept`, `GET /api/organizations/invitations`
-- `DELETE /api/organizations/{id}/members/{userId}`, `/members/me`
-- `GET /api/admin/stats`, `/users`, `/users/{userId}`, `/users/deleted`
-- `POST /api/admin/users/{userId}/roles`, `/unlock`, `/restore`
+- `POST /api/v1/auth/register`, `/login`, `/refresh`, `/logout`
+- `POST /api/v1/auth/verify-email`, `/resend-verification`
+- `GET/POST /api/v1/auth/consents`, `PUT /api/v1/auth/profile`, `GET /api/v1/auth/export`
+- `POST /api/v1/auth/forgot-password`, `/reset-password`, `/change-password`
+- `POST /api/v1/auth/2fa/enable`, `/verify`, `/disable`, `/recovery-codes`, `/login`
+- `DELETE /api/v1/auth/account`
+- `GET /api/v1/external-auth/login?provider=Google|GitHub`, `/callback`, `/providers`
+- `POST /api/v1/external-auth/exchange`
+- `GET/POST /api/v1/organizations`, `GET/PUT/DELETE /api/v1/organizations/{id}`
+- `POST /api/v1/organizations/{id}/invite`, `/restore`, `/transfer-ownership`
+- `POST /api/v1/organizations/invitations/accept`, `GET /api/v1/organizations/invitations`
+- `DELETE /api/v1/organizations/{id}/members/{userId}`, `/members/me`
+- `PUT /api/v1/organizations/{id}/members/{userId}/role`
+- `GET /api/v1/admin/stats`, `/users`, `/users/{userId}`, `/users/deleted`, `/audit-events`
+- `POST /api/v1/admin/users/{userId}/roles`, `/lock`, `/unlock`, `/restore`, `/revoke-sessions`
+- `DELETE /api/v1/admin/users/{userId}`
+
+`GET /health` is liveness (static). `GET /health/ready` is readiness and returns 503 until
+the schema is initialised and the database is reachable — point platform health checks there.
 
 Downstream services can validate the JWTs this service issues (same `Jwt:SecretKey`,
 `Issuer`, `Audience`) without calling back into AuthService — organization membership
 and role are embedded as claims (`organization`, `organization:{id}:role`).
+
+> **Note on the symmetric key.** With HS256, verifying and signing are the same capability:
+> any service holding `Jwt:SecretKey` can also mint a token for any user with any role,
+> including `SuperAdmin`. Only give it to services you would trust to do that. The trade-off
+> and the migration trigger are recorded in
+> [`docs/decisions/0002-token-signing-algorithm.md`](docs/decisions/0002-token-signing-algorithm.md).
 
 ## Testing
 
 ```bash
 dotnet test
 ```
+
+The suite boots the real application against in-memory SQLite via `WebApplicationFactory` —
+no Docker and no network required.
+
+## Contributing and security
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — scope, setup, conventions.
+- [`SECURITY.md`](SECURITY.md) — how to report a vulnerability privately, and the project's
+  current security posture.
+- [`docs/issue-analysis.md`](docs/issue-analysis.md) — the open backlog analysed, with the
+  fixes chosen and the alternatives rejected.
+- [`docs/decisions/`](docs/decisions) — architecture decision records.
 
 ## License
 

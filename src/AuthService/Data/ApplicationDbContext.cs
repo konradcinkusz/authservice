@@ -17,6 +17,8 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<InvitationEmailAttempt> InvitationEmailAttempts => Set<InvitationEmailAttempt>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<UserConsent> UserConsents => Set<UserConsent>();
+    public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<OAuthExchangeCode> OAuthExchangeCodes => Set<OAuthExchangeCode>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -86,16 +88,60 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(ea => new { ea.InvitationId, ea.AttemptedAt });
         });
 
-        // RefreshToken
+        // RefreshToken — only the hash is stored, and rotation families are indexed
+        // so a reuse-detection revocation is a single indexed UPDATE.
         builder.Entity<RefreshToken>(entity =>
         {
             entity.HasKey(rt => rt.Id);
-            entity.HasIndex(rt => rt.Token).IsUnique();
+            entity.Property(rt => rt.TokenHash).IsRequired().HasMaxLength(64);
+            entity.Property(rt => rt.FamilyId).IsRequired().HasMaxLength(64);
+            entity.Property(rt => rt.RevokedReason).HasMaxLength(64);
+            entity.HasIndex(rt => rt.TokenHash).IsUnique();
             entity.HasIndex(rt => new { rt.UserId, rt.IsRevoked });
+            entity.HasIndex(rt => rt.FamilyId);
+            entity.HasIndex(rt => rt.ExpiresAt);
 
             entity.HasOne(rt => rt.User)
                 .WithMany()
                 .HasForeignKey(rt => rt.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // AuditEvent — append-only; indexed for the three questions that actually get
+        // asked: what happened to this user, what did this admin do, what happened lately.
+        builder.Entity<AuditEvent>(entity =>
+        {
+            entity.HasKey(a => a.Id);
+            entity.Property(a => a.Action).IsRequired().HasMaxLength(64);
+            entity.Property(a => a.ActorUserId).HasMaxLength(450);
+            entity.Property(a => a.ActorEmail).HasMaxLength(256);
+            entity.Property(a => a.TargetUserId).HasMaxLength(450);
+            entity.Property(a => a.TargetOrganizationId).HasMaxLength(450);
+            entity.Property(a => a.IpAddress).HasMaxLength(64);
+            entity.Property(a => a.UserAgent).HasMaxLength(512);
+
+            entity.HasIndex(a => a.OccurredAt);
+            entity.HasIndex(a => new { a.Action, a.OccurredAt });
+            entity.HasIndex(a => new { a.TargetUserId, a.OccurredAt });
+            entity.HasIndex(a => new { a.ActorUserId, a.OccurredAt });
+            entity.HasIndex(a => new { a.TargetOrganizationId, a.OccurredAt });
+
+            // Deliberately no FK to AspNetUsers: an audit row must outlive the account
+            // it describes, which is the whole point of keeping ActorEmail alongside the id.
+        });
+
+        // OAuthExchangeCode
+        builder.Entity<OAuthExchangeCode>(entity =>
+        {
+            entity.HasKey(c => c.Id);
+            entity.Property(c => c.CodeHash).IsRequired().HasMaxLength(64);
+            entity.Property(c => c.Provider).HasMaxLength(64);
+            entity.HasIndex(c => c.CodeHash).IsUnique();
+            entity.HasIndex(c => c.ExpiresAt);
+
+            entity.HasOne(c => c.User)
+                .WithMany()
+                .HasForeignKey(c => c.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

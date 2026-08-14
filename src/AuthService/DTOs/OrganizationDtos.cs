@@ -147,3 +147,17 @@ public record UpdateMemberRoleRequest(
     [RegularExpression("^(Owner|Admin|Member)$", ErrorMessage = "Role must be Owner, Admin, or Member")]
     string Role
 );
+
+/// <summary>
+/// Request model for transferring organization ownership to another existing member
+/// </summary>
+public record TransferOwnershipRequest(
+    /// <summary>User id of the member who becomes the new Owner. Must already be a member.</summary>
+    [Required(ErrorMessage = "toUserId is required")]
+    string ToUserId,
+
+    /// <summary>
+    /// Whether the outgoing owner keeps Admin (default) or steps down to Member.
+    /// </summary>
+    bool RetainAdminRole = true
+);

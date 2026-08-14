@@ -1,0 +1,62 @@
+name: Bug report
+description: Something behaves differently from what the documentation says
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Found a security vulnerability?** Do not file it here — see
+        [SECURITY.md](https://github.com/konradcinkusz/authservice/blob/main/SECURITY.md)
+        for the private reporting channel.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Ideally a `curl` sequence or a failing test.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0, or the commit SHA you are running
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Database provider
+      options:
+        - PostgreSQL
+        - SQL Server
+        - Not relevant
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Relevant configuration
+      description: >
+        Environment variables or appsettings that matter here — especially `Auth:*`,
+        `Network:*`, and `Database:SchemaMode`. **Redact secrets and connection strings.**
+      render: shell
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The service logs a summary of its security-relevant configuration at startup; that line is often the useful one.
+      render: shell

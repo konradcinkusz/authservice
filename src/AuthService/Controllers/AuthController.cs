@@ -17,7 +17,8 @@ namespace AuthService.Controllers;
 /// Handles authentication and user account management operations
 /// </summary>
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/v1/[controller]")]
+[Route("api/[controller]")] // Unversioned alias for the pre-v1 contract. Prefer /api/v1.
 public class AuthController(
     UserManager<ApplicationUser> _userManager,
     SignInManager<ApplicationUser> _signInManager,
@@ -26,16 +27,30 @@ public class AuthController(
     IConfiguration _configuration,
     ApplicationDbContext _db,
     IOptionsSnapshot<ConsentSettings> _consentSettings,
+    IOptions<AuthOptions> _authOptions,
+    IOptions<NetworkOptions> _networkOptions,
+    EmailCapabilities _emailCapabilities,
+    IAuditService _audit,
     ILogger<AuthController> _logger
 ) : ControllerBase
 {
     private const int IpAddressMaxLength = 64;
     private const int UserAgentMaxLength = 512;
 
-    private string? GetClientIp() =>
-        HttpContext.Connection.RemoteIpAddress?.ToString() is { Length: > 0 } ip
-            ? (ip.Length > IpAddressMaxLength ? ip[..IpAddressMaxLength] : ip)
-            : null;
+    /// <summary>
+    /// Whether an unverified address is allowed to sign in. Defaults to "on when this
+    /// deployment can actually send verification email", so the zero-config quick start
+    /// does not lock users out of accounts they just created.
+    /// </summary>
+    private bool RequireConfirmedEmail =>
+        _authOptions.Value.RequireConfirmedEmail ?? _emailCapabilities.CanSendEmail;
+
+    private string? GetClientIp()
+    {
+        var ip = HttpContext.ResolveClientIp(_networkOptions.Value.ClientIpHeader);
+        if (string.IsNullOrEmpty(ip)) return null;
+        return ip.Length > IpAddressMaxLength ? ip[..IpAddressMaxLength] : ip;
+    }
 
     private string? GetClientUserAgent()
     {
@@ -66,9 +81,10 @@ public class AuthController(
     [HttpPost("register")]
     [EnableRateLimiting("auth")]
     [ProducesResponseType(typeof(TokenResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(RegistrationPendingVerificationResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<ActionResult<TokenResponse>> Register([FromBody] RegisterRequest request)
+    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
         if (!ModelState.IsValid)
         {
@@ -100,11 +116,14 @@ public class AuthController(
             suffix++;
         }
 
+        var requireVerification = RequireConfirmedEmail;
+
         var user = new ApplicationUser
         {
             UserName = userName,
             Email = request.Email,
-            EmailConfirmed = true // For simplicity; implement email confirmation in production
+            // Trusted only when this deployment cannot send a verification message at all.
+            EmailConfirmed = !requireVerification
         };
 
         var result = await _userManager.CreateAsync(user, request.Password);
@@ -156,42 +175,102 @@ public class AuthController(
             _logger.LogError(ex, "Failed to send welcome email to {Email}", user.Email);
         }
 
+        if (requireVerification)
+        {
+            await SendVerificationEmailAsync(user);
+
+            // 202: the account exists but cannot be used until the address is confirmed.
+            // No tokens are issued, because an unconfirmed address is not yet proof of anything.
+            return Accepted(new RegistrationPendingVerificationResponse(
+                user.Id,
+                user.Email!,
+                "Account created. Check your email for a verification link before signing in."));
+        }
+
         var tokenResponse = await _tokenService.GenerateTokensAsync(user);
 
         return Ok(tokenResponse);
     }
 
     /// <summary>
-    /// Authenticates a user and returns JWT tokens
+    /// Authenticates a user and returns JWT tokens.
+    /// When the account has two-factor authentication enabled this returns a short-lived
+    /// challenge instead, to be completed at <c>POST /api/v1/auth/2fa/login</c>.
     /// </summary>
     [HttpPost("login")]
     [EnableRateLimiting("auth")]
+    // A 2FA-enabled account gets TwoFactorRequiredResponse at this same 200 instead of tokens;
+    // only one type can be declared per status code, so the common case is the documented one.
     [ProducesResponseType(typeof(TokenResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
-    public async Task<ActionResult<TokenResponse>> Login([FromBody] LoginRequest request)
+    public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
         var user = await _userManager.FindByEmailAsync(request.Email);
         if (user == null || user.IsDeleted)
+        {
+            await _audit.LogAsync(AuditAction.LoginFailed, succeeded: false,
+                metadata: new { email = request.Email, reason = "unknown_or_deleted_account" });
             return Unauthorized(new { error = "Invalid email or password" });
+        }
 
         var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
 
         if (!result.Succeeded)
         {
-            if (result.IsLockedOut)
-                return Unauthorized(new { error = "Account is locked out" });
+            // Only disclose lockout to a caller who already proved they know the password —
+            // otherwise "locked out" is a free account-existence oracle for anyone willing to
+            // burn five guesses, and lockout is trivially reachable by an attacker.
+            if (result.IsLockedOut && await _userManager.CheckPasswordAsync(user, request.Password))
+            {
+                await _audit.LogAsync(AuditAction.LoginLockedOut, targetUserId: user.Id, succeeded: false,
+                    metadata: new { lockoutEnd = user.LockoutEnd });
+
+                return Unauthorized(new
+                {
+                    error = "Account is temporarily locked after too many failed sign-in attempts.",
+                    lockedOut = true,
+                    lockoutEnd = user.LockoutEnd
+                });
+            }
+
+            await _audit.LogAsync(AuditAction.LoginFailed, targetUserId: user.Id, succeeded: false,
+                metadata: new { reason = result.IsLockedOut ? "locked_out" : "invalid_password" });
 
             return Unauthorized(new { error = "Invalid email or password" });
+        }
+
+        if (RequireConfirmedEmail && !user.EmailConfirmed)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "Email address has not been verified.",
+                emailVerificationRequired = true
+            });
+        }
+
+        // First factor passed. If a second is configured, stop here and hand back a challenge
+        // that is useless for anything except completing this login.
+        if (user.TwoFactorEnabled)
+        {
+            var challengeToken = _tokenService.GenerateTwoFactorChallengeToken(user);
+
+            return Ok(new TwoFactorRequiredResponse(
+                RequiresTwoFactor: true,
+                ChallengeToken: challengeToken,
+                ExpiresIn: 300));
         }
 
         user.LastLoginAt = DateTime.UtcNow;
         await _userManager.UpdateAsync(user);
 
         _logger.LogInformation("User {Email} logged in successfully", request.Email);
+        await _audit.LogAsync(AuditAction.LoginSucceeded, actorUserId: user.Id, actorEmail: user.Email,
+            targetUserId: user.Id);
 
         var tokenResponse = await _tokenService.GenerateTokensAsync(user);
 
@@ -218,6 +297,74 @@ public class AuthController(
             return Unauthorized(new { error = "Invalid or expired refresh token" });
 
         return Ok(tokenResponse);
+    }
+
+    // ─── Email verification ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Confirms an email address using the token from the verification email.
+    /// </summary>
+    [HttpPost("verify-email")]
+    [EnableRateLimiting("auth")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailRequest request)
+    {
+        var user = await _userManager.FindByEmailAsync(request.Email);
+
+        // Same response whether or not the account exists — this endpoint must not become
+        // an account-existence oracle.
+        if (user == null || user.IsDeleted)
+            return BadRequest(new { error = "Invalid or expired verification token." });
+
+        if (user.EmailConfirmed)
+            return Ok(new { message = "Email address is already verified." });
+
+        var result = await _userManager.ConfirmEmailAsync(user, request.Token);
+        if (!result.Succeeded)
+            return BadRequest(new { error = "Invalid or expired verification token." });
+
+        await _audit.LogAsync(AuditAction.EmailVerified, actorUserId: user.Id, actorEmail: user.Email,
+            targetUserId: user.Id);
+
+        return Ok(new { message = "Email address verified. You can now sign in." });
+    }
+
+    /// <summary>
+    /// Re-sends the verification email for an unconfirmed account.
+    /// </summary>
+    [HttpPost("resend-verification")]
+    [EnableRateLimiting("auth")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ResendVerification([FromBody] ResendVerificationRequest request)
+    {
+        var user = await _userManager.FindByEmailAsync(request.Email);
+
+        if (user != null && !user.IsDeleted && !user.EmailConfirmed)
+            await SendVerificationEmailAsync(user);
+
+        // Always the same answer, for the same reason as forgot-password.
+        return Ok(new { message = "If that address needs verification, a new link has been sent." });
+    }
+
+    private async Task SendVerificationEmailAsync(ApplicationUser user)
+    {
+        try
+        {
+            var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+            var frontendBaseUrl = _configuration["FrontendBaseUrl"] ?? "http://localhost:3000";
+            var verificationUrl = $"{frontendBaseUrl}/verify-email" +
+                                  $"?token={Uri.EscapeDataString(token)}" +
+                                  $"&email={Uri.EscapeDataString(user.Email!)}";
+
+            await _emailService.SendEmailVerificationAsync(user.Email!, token, verificationUrl);
+
+            await _audit.LogAsync(AuditAction.EmailVerificationSent, targetUserId: user.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send verification email to {Email}", user.Email);
+        }
     }
 
     /// <summary>
@@ -262,10 +409,137 @@ public class AuthController(
             user.LastLoginAt,
             organizations,
             user.PasswordHash != null,
-            requiresConsent
+            requiresConsent,
+            user.EmailConfirmed,
+            user.TwoFactorEnabled
         );
 
         return Ok(response);
+    }
+
+    /// <summary>
+    /// Exports everything this service holds about the authenticated user (GDPR Art. 15 / Art. 20).
+    /// </summary>
+    [Authorize]
+    [HttpGet("export")]
+    [ProducesResponseType(typeof(UserDataExport), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> ExportMyData()
+    {
+        var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userId == null)
+            return Unauthorized();
+
+        var user = await _userManager.Users
+            .Include(u => u.OrganizationMemberships)
+            .ThenInclude(om => om.Organization)
+            .FirstOrDefaultAsync(u => u.Id == userId);
+
+        if (user == null)
+            return NotFound();
+
+        var logins = await _userManager.GetLoginsAsync(user);
+        var roles = await _userManager.GetRolesAsync(user);
+
+        var consents = await _db.UserConsents
+            .AsNoTracking()
+            .Where(c => c.UserId == userId)
+            .OrderBy(c => c.AcceptedAt)
+            .Select(c => new ConsentExportDto(
+                c.Type.ToString(),
+                c.Version,
+                c.Accepted,
+                c.AcceptedAt,
+                c.IpAddress,
+                c.UserAgent,
+                c.Locale,
+                c.CookieCategories))
+            .ToListAsync();
+
+        var invitationsReceived = await _db.OrganizationInvitations
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(i => i.Email == user.Email)
+            .Select(i => new InvitationExportDto(
+                i.OrganizationId,
+                i.Organization.Name,
+                i.Email,
+                i.Role.ToString(),
+                i.CreatedAt,
+                i.ExpiresAt,
+                i.IsAccepted,
+                i.AcceptedAt))
+            .ToListAsync();
+
+        var invitationsSent = await _db.OrganizationInvitations
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(i => i.InvitedByUserId == userId)
+            .Select(i => new InvitationExportDto(
+                i.OrganizationId,
+                i.Organization.Name,
+                i.Email,
+                i.Role.ToString(),
+                i.CreatedAt,
+                i.ExpiresAt,
+                i.IsAccepted,
+                i.AcceptedAt))
+            .ToListAsync();
+
+        // Session *metadata* only. The tokens themselves are stored as hashes and would be
+        // useless here anyway; exporting them would be handing out live credentials.
+        var sessions = await _db.RefreshTokens
+            .AsNoTracking()
+            .Where(rt => rt.UserId == userId)
+            .OrderByDescending(rt => rt.CreatedAt)
+            .Select(rt => new SessionExportDto(
+                rt.CreatedAt,
+                rt.ExpiresAt,
+                rt.IsRevoked,
+                rt.RevokedAt,
+                rt.RevokedReason))
+            .ToListAsync();
+
+        var export = new UserDataExport(
+            ExportedAt: DateTime.UtcNow,
+            Profile: new ProfileExportDto(
+                user.Id,
+                user.Email!,
+                user.UserName,
+                user.ProfileImageUrl,
+                user.CreatedAt,
+                user.LastLoginAt,
+                user.EmailConfirmed,
+                user.TwoFactorEnabled,
+                user.PasswordHash != null,
+                user.IsDeleted,
+                user.DeletedAt,
+                user.ScheduledPermanentDeletionAt,
+                roles.ToList()),
+            // Provider keys are deliberately excluded — they identify the account at the
+            // provider and are not the user's data to re-export.
+            ExternalLogins: logins
+                .Select(l => new ExternalLoginExportDto(l.LoginProvider, l.ProviderDisplayName))
+                .ToList(),
+            Consents: consents,
+            Organizations: user.OrganizationMemberships
+                .Select(om => new OrganizationExportDto(
+                    om.OrganizationId,
+                    om.Organization.Name,
+                    om.Role.ToString(),
+                    om.JoinedAt))
+                .ToList(),
+            InvitationsReceived: invitationsReceived,
+            InvitationsSent: invitationsSent,
+            Sessions: sessions);
+
+        await _audit.LogAsync(AuditAction.DataExported, actorUserId: userId, actorEmail: user.Email,
+            targetUserId: userId);
+
+        // Content-Disposition makes "download my data" a single link in a frontend.
+        Response.Headers.ContentDisposition = "attachment; filename=\"authservice-export.json\"";
+        return Ok(export);
     }
 
     /// <summary>
@@ -460,6 +734,7 @@ public class AuthController(
             {
                 await _emailService.SendPasswordResetEmailAsync(request.Email, token, resetUrl);
                 _logger.LogInformation("Password reset email sent to {Email}", request.Email);
+                await _audit.LogAsync(AuditAction.PasswordResetRequested, targetUserId: user.Id);
             }
             catch (Exception ex)
             {
@@ -509,19 +784,22 @@ public class AuthController(
             return BadRequest(new { errors });
         }
 
-        await _tokenService.RevokeRefreshTokensAsync(user.Id);
+        await _tokenService.RevokeRefreshTokensAsync(user.Id, RefreshTokenRevocationReason.PasswordReset);
 
         _logger.LogInformation("Password reset successful for {Email}", request.Email);
+        await _audit.LogAsync(AuditAction.PasswordResetCompleted, targetUserId: user.Id);
 
         return Ok(new { message = "Password has been reset successfully. You can now sign in with your new password." });
     }
 
     /// <summary>
-    /// Changes the authenticated user's password
+    /// Changes the authenticated user's password.
+    /// All other sessions are terminated; by default a fresh token pair is returned so the
+    /// calling session survives (see <c>Auth:ReissueTokensOnPasswordChange</c>).
     /// </summary>
     [Authorize]
     [HttpPost("change-password")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ChangePasswordResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -540,7 +818,32 @@ public class AuthController(
         if (!result.Succeeded)
             return BadRequest(new { errors = result.Errors.Select(e => e.Description) });
 
-        return Ok(new { message = "Password changed successfully" });
+        await _audit.LogAsync(AuditAction.PasswordChanged, actorUserId: user.Id, actorEmail: user.Email,
+            targetUserId: user.Id);
+
+        if (!_authOptions.Value.RevokeSessionsOnPasswordChange)
+            return Ok(new ChangePasswordResponse("Password changed successfully", false, null));
+
+        // Changing a password is how a user responds to "someone else has my session".
+        // It has to actually end those sessions.
+        await _tokenService.RevokeRefreshTokensAsync(user.Id, RefreshTokenRevocationReason.PasswordChanged);
+
+        if (!_authOptions.Value.ReissueTokensOnPasswordChange)
+        {
+            return Ok(new ChangePasswordResponse(
+                "Password changed successfully. All sessions have been signed out — please sign in again.",
+                true,
+                null));
+        }
+
+        // Hand the caller a new pair so the device that just changed the password stays
+        // usable while every other device is signed out.
+        var tokens = await _tokenService.GenerateTokensAsync(user);
+
+        return Ok(new ChangePasswordResponse(
+            "Password changed successfully. All other sessions have been signed out.",
+            true,
+            tokens));
     }
 
     /// <summary>
@@ -555,7 +858,8 @@ public class AuthController(
         var userId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (userId != null)
         {
-            await _tokenService.RevokeRefreshTokensAsync(userId);
+            await _tokenService.RevokeRefreshTokensAsync(userId, RefreshTokenRevocationReason.Logout);
+            await _audit.LogAsync(AuditAction.Logout, actorUserId: userId, targetUserId: userId);
         }
 
         await _signInManager.SignOutAsync();
@@ -595,7 +899,7 @@ public class AuthController(
                 return BadRequest(new { error = "Invalid password" });
         }
 
-        await _tokenService.RevokeRefreshTokensAsync(userId);
+        await _tokenService.RevokeRefreshTokensAsync(userId, RefreshTokenRevocationReason.AccountDeleted);
 
         // Soft-delete the user (permanent deletion happens after the retention period)
         user.IsDeleted = true;
@@ -609,6 +913,10 @@ public class AuthController(
         _logger.LogInformation(
             "User {UserId} soft-deleted their account. Scheduled permanent deletion: {ScheduledAt}",
             userId, user.ScheduledPermanentDeletionAt);
+
+        await _audit.LogAsync(AuditAction.AccountSoftDeleted, actorUserId: userId, actorEmail: user.Email,
+            targetUserId: userId,
+            metadata: new { scheduledPermanentDeletionAt = user.ScheduledPermanentDeletionAt });
 
         return Ok(new { message = "Account deleted successfully" });
     }

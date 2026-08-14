@@ -6,8 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    name: Build and test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,4 +28,68 @@ jobs:
         run: dotnet build AuthService.sln --no-restore --configuration Release
 
       - name: Test
-        run: dotnet test AuthService.sln --no-build --configuration Release
+        run: dotnet test AuthService.sln --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/TestResults/*.trx"
+          if-no-files-found: ignore
+
+  format:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      # The codebase is consistently formatted today and nothing enforced it, so the first
+      # outside contribution was where drift would start.
+      - name: Verify formatting
+        run: dotnet format AuthService.sln --verify-no-changes --severity error
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # The production Dockerfile was previously only exercised by the release workflow,
+      # which runs on v* tags — so until the first tag existed it had never been built at all.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/AuthService/Dockerfile
+          push: false
+          load: true
+          tags: authservice:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test the image
+        run: |
+          # The service must fail fast and say which setting is missing, rather than starting
+          # in a broken state — this asserts that guard still works in the built image.
+          set +e
+          output=$(docker run --rm -e ASPNETCORE_ENVIRONMENT=Production authservice:ci 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ $status -eq 0 ]; then
+            echo "::error::Expected the service to fail without a connection string"
+            exit 1
+          fi
+          echo "$output" | grep -q "DefaultConnection" || {
+            echo "::error::Startup failure did not name the missing setting"
+            exit 1
+          }

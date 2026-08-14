@@ -44,4 +44,14 @@ public class NoOpEmailService(ILogger<NoOpEmailService> _logger) : IEmailService
 
         return Task.CompletedTask;
     }
+
+    public Task SendEmailVerificationAsync(string toEmail, string verificationToken, string verificationUrl)
+    {
+        _logger.LogWarning(
+            "Email sending is not configured. Verification email to {Email} was not sent. " +
+            "Verification URL: {VerificationUrl}, verification token: {Token}",
+            toEmail, verificationUrl, verificationToken);
+
+        return Task.CompletedTask;
+    }
 }

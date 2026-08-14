@@ -11,11 +11,16 @@ public interface IMigrationCompletionSignal
 
     /// <summary>Marks migrations and seeding as complete.</summary>
     void SetCompleted();
+
+    /// <summary>True once initialization has completed. Non-blocking, for readiness probes.</summary>
+    bool IsCompleted { get; }
 }
 
 public sealed class MigrationCompletionSignal : IMigrationCompletionSignal
 {
     private readonly TaskCompletionSource _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public bool IsCompleted => _tcs.Task.IsCompletedSuccessfully;
 
     public Task WaitAsync(CancellationToken cancellationToken = default)
         => cancellationToken.CanBeCanceled
