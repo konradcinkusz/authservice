@@ -5,20 +5,25 @@ name: Fly.io CI/CD
 # is published against a new tag). Can also be run manually via workflow_dispatch.
 #
 # Flow:
+#   publish-ghcr        (independent — needs only GITHUB_TOKEN, no Fly setup required)
 #   deploy-postgres  ──┐
-#   build             ──┴──▶  deploy-authservice
+#   build             ──┴──▶  deploy-authservice   (this repo's own reference instance)
 #
 # This repo is meant to be reused: each consuming project runs its own
 # independent instance (own Fly app, own Postgres, own JWT signing key) rather
-# than sharing one central deployment. `build` publishes a version-pinned,
-# portable image to GHCR (ghcr.io/konradcinkusz/authservice:<tag>) specifically
-# so other projects' own Fly deploy workflows can pull a specific release
-# without checking out this repo's source — no build-time coupling between
-# this service and anything that consumes it. The registry.fly.io push next to
-# it is unrelated: that one only feeds *this* repo's own self-deploy below.
+# than sharing one central deployment. `publish-ghcr` publishes a
+# version-pinned, portable image to GHCR (ghcr.io/konradcinkusz/authservice:<tag>)
+# specifically so other projects' own Fly deploy workflows can pull a specific
+# release without checking out this repo's source. It's a SEPARATE job from
+# `build` (which pushes to registry.fly.io for this repo's own self-deploy)
+# deliberately: publishing the reusable artifact must not depend on this
+# repo's own Fly credentials being configured at all. A consumer shouldn't be
+# blocked on whether the maintainer ever set up authservice's own hosted
+# instance.
 #
 # Secrets scope: Settings > Environments > production
-# Required secrets:
+# Required to publish to GHCR (publish-ghcr): nothing — GITHUB_TOKEN is automatic.
+# Required for this repo's own self-deploy (deploy-postgres / build / deploy-authservice):
 #   FLY_API_TOKEN            — Fly.io deploy token (flyctl auth token / fly tokens create deploy)
 #   POSTGRES_PASSWORD        — Password for the authservice Postgres app
 #   JWT_SECRET                — Symmetric signing key for access tokens (32+ chars)
@@ -58,6 +63,46 @@ env:
   POSTGRES_VOLUME: authservice_postgres_data
 
 jobs:
+  # ============================================================
+  # Publish the portable, reusable image to GHCR. Deliberately
+  # independent of everything else in this workflow — no Fly
+  # credentials, no `environment: production` gate, nothing
+  # beyond the automatic GITHUB_TOKEN. This must succeed on every
+  # tag push regardless of whether this repo's own self-deploy is
+  # configured at all.
+  # ============================================================
+  publish-ghcr:
+    name: Publish portable image (GHCR)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate Docker to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/AuthService/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/konradcinkusz/authservice:${{ env.TAG }}
+            ghcr.io/konradcinkusz/authservice:latest
+          cache-from: type=gha,scope=flyio-authservice
+          cache-to: type=gha,mode=max,scope=flyio-authservice
+
   # ============================================================
   # PostgreSQL — idempotent: skips app/volume creation if they
   # already exist, safe to re-run on every deploy.
@@ -126,19 +171,16 @@ jobs:
           sleep 20
 
   # ============================================================
-  # Build & push the AuthService image, runs in parallel with
-  # deploy-postgres. Pushes to two registries:
-  #   registry.fly.io/<APP_AUTHSERVICE>  — feeds this repo's own deploy-authservice job below
-  #   ghcr.io/konradcinkusz/authservice  — the portable, version-pinned artifact other
-  #                                        projects' own Fly deploys pull from
+  # Build & push the AuthService image to THIS repo's own Fly
+  # registry, for deploy-authservice below only. Runs in parallel
+  # with deploy-postgres and publish-ghcr, but is otherwise
+  # unrelated to publish-ghcr — see the header note on why those
+  # are deliberately separate jobs.
   # ============================================================
   build:
-    name: Build & Push Image
+    name: Build & Push Image (registry.fly.io)
     runs-on: ubuntu-latest
     environment: production
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -157,13 +199,6 @@ jobs:
       - name: Authenticate Docker to registry.fly.io
         run: flyctl auth docker
 
-      - name: Authenticate Docker to ghcr.io
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and push AuthService
         uses: docker/build-push-action@v6
         with:
@@ -175,8 +210,6 @@ jobs:
           tags: |
             registry.fly.io/${{ env.APP_AUTHSERVICE }}:${{ env.TAG }}
             registry.fly.io/${{ env.APP_AUTHSERVICE }}:latest
-            ghcr.io/konradcinkusz/authservice:${{ env.TAG }}
-            ghcr.io/konradcinkusz/authservice:latest
           cache-from: type=gha,scope=flyio-authservice
           cache-to: type=gha,mode=max,scope=flyio-authservice
 
