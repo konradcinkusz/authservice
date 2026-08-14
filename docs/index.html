@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>authservice — standalone auth for ASP.NET Core</title>
+<meta name="description" content="A standalone JWT authentication and authorization microservice for ASP.NET Core. User accounts, OAuth social login, multi-tenant organizations, and an admin API — deploy your own instance per project.">
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-subtle: #f6f7f9;
+    --border: #e3e5e9;
+    --text: #16181d;
+    --text-muted: #5b616e;
+    --accent: #4f46e5;
+    --accent-ink: #ffffff;
+    --code-bg: #0f1117;
+    --code-text: #e2e4ea;
+    --code-accent: #8ab4ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0c0f;
+      --bg-subtle: #14161b;
+      --border: #262931;
+      --text: #eceef2;
+      --text-muted: #9aa0ab;
+      --accent: #8b85f6;
+      --accent-ink: #0b0c0f;
+      --code-bg: #0a0b0e;
+      --code-text: #dfe2ea;
+      --code-accent: #9cc0ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+  header.hero { padding: 88px 0 56px; border-bottom: 1px solid var(--border); }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600; letter-spacing: .02em;
+    color: var(--text-muted); text-transform: uppercase;
+    margin-bottom: 18px;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  h1 {
+    font-size: clamp(34px, 5vw, 52px);
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    margin: 0 0 20px;
+  }
+  .lede {
+    font-size: 19px;
+    color: var(--text-muted);
+    max-width: 640px;
+    margin: 0 0 32px;
+  }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 18px; border-radius: 10px;
+    font-size: 15px; font-weight: 600; text-decoration: none;
+    border: 1px solid var(--border);
+  }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  .btn.secondary { color: var(--text); }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge {
+    font-size: 12px; font-weight: 600; color: var(--text-muted);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 4px 10px;
+  }
+
+  section { padding: 56px 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: none; }
+  h2 {
+    font-size: 13px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--text-muted);
+    margin: 0 0 24px;
+  }
+
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 22px;
+  }
+  .card h3 { font-size: 16px; margin: 0 0 8px; }
+  .card p { font-size: 14.5px; color: var(--text-muted); margin: 0; }
+
+  .model {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 26px;
+  }
+  .model p { margin: 0 0 12px; color: var(--text-muted); font-size: 15px; }
+  .model p:last-child { margin-bottom: 0; }
+  .model strong { color: var(--text); }
+
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    border-radius: 14px;
+    padding: 20px 22px;
+    overflow-x: auto;
+    font-size: 13.5px;
+    line-height: 1.6;
+  }
+  code { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+  pre .cmt { color: var(--text-muted); }
+  pre .cmd { color: var(--code-accent); }
+
+  .links { display: flex; flex-wrap: wrap; gap: 10px 28px; }
+  .links a { font-weight: 600; font-size: 15px; text-decoration: none; }
+  .links a:hover { text-decoration: underline; }
+
+  footer {
+    padding: 40px 0 64px;
+    color: var(--text-muted);
+    font-size: 13.5px;
+  }
+  footer a { color: inherit; text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow"><span class="dot"></span>Open source · MIT</div>
+    <h1>Auth, handled. Once.</h1>
+    <p class="lede">
+      A standalone JWT authentication and authorization microservice for ASP.NET Core.
+      User accounts, OAuth social login, multi-tenant organizations, and an admin API —
+      run your own instance, point any frontend or backend at it over HTTP, and never
+      build a login flow again.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/konradcinkusz/authservice">View on GitHub</a>
+      <a class="btn secondary" href="https://github.com/konradcinkusz/authservice#quick-start-docker-compose">Quick start</a>
+      <a class="btn secondary" href="https://github.com/konradcinkusz/authservice/blob/main/DEMO.md">Demo walkthrough</a>
+    </div>
+    <div class="badges">
+      <span class="badge">.NET 9</span>
+      <span class="badge">PostgreSQL / SQL Server</span>
+      <span class="badge">JWT</span>
+      <span class="badge">OAuth2 · Google / GitHub</span>
+      <span class="badge">Fly.io</span>
+      <span class="badge">MIT License</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>What's inside</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Accounts &amp; JWT</h3>
+        <p>Registration, login, password reset/change, lockout, soft-delete with a retention period. Short-lived access tokens plus long-lived, server-side revocable refresh tokens.</p>
+      </div>
+      <div class="card">
+        <h3>OAuth social login</h3>
+        <p>Google and GitHub out of the box — enabled automatically once credentials are configured, and harmless to leave unset otherwise.</p>
+      </div>
+      <div class="card">
+        <h3>Organizations</h3>
+        <p>Multi-tenant grouping with Owner / Admin / Member roles, email invitations with retry tracking, soft-delete and restore.</p>
+      </div>
+      <div class="card">
+        <h3>Admin API</h3>
+        <p>Paginated user and organization listing, role management, account lockout and restore — protected by Admin/SuperAdmin roles.</p>
+      </div>
+      <div class="card">
+        <h3>Consent tracking</h3>
+        <p>Versioned Terms / Privacy / Cookies acceptance records for GDPR-style accountability.</p>
+      </div>
+      <div class="card">
+        <h3>Bring your own database</h3>
+        <p>PostgreSQL by default, or SQL Server — selected by configuration, not by fork. Rate limiting, CORS, and Swagger with JWT bearer auth are already wired in.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>How it's meant to be used</h2>
+    <div class="model">
+      <p><strong>One codebase, many independent instances.</strong> This isn't a shared, central identity server — every project that adopts authservice deploys its own copy: its own Fly app, its own database, its own signing key. Upgrading is a deliberate choice each project makes on its own schedule, not something that happens to you.</p>
+      <p><strong>No source coupling.</strong> Every tagged release publishes a version-pinned image to <code>ghcr.io/konradcinkusz/authservice</code>. Consuming projects pull a specific tag and run it — the same relationship as pulling <code>postgres:16-alpine</code>, just an image this repo happens to publish instead of a public one.</p>
+      <p>Downstream services validate the JWTs this instance issues directly — organization membership and role travel as claims — without calling back into authservice on every request.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Try it in 30 seconds</h2>
+    <pre><code><span class="cmt"># Postgres + authservice, a demo JWT secret, and a seeded SuperAdmin account</span>
+<span class="cmd">docker compose up --build</span>
+
+<span class="cmt"># then</span>
+<span class="cmd">open</span> http://localhost:8080/swagger</code></pre>
+  </section>
+
+  <section>
+    <h2>Explore</h2>
+    <div class="links">
+      <a href="https://github.com/konradcinkusz/authservice">Source &amp; README</a>
+      <a href="https://github.com/konradcinkusz/authservice/blob/main/DEMO.md">Demo walkthrough</a>
+      <a href="https://github.com/konradcinkusz/authservice/blob/main/EXTRACTION.md">Design notes</a>
+      <a href="https://github.com/konradcinkusz/authservice/blob/main/tutorial.md">Tutorial</a>
+      <a href="https://github.com/konradcinkusz/authservice/blob/main/LICENSE">MIT License</a>
+    </div>
+  </section>
+
+  <footer>
+    authservice is MIT-licensed and maintained by <a href="https://github.com/konradcinkusz">@konradcinkusz</a>.
+  </footer>
+</div>
+
+</body>
+</html>
