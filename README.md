@@ -74,11 +74,50 @@ Configuration is standard ASP.NET Core (`appsettings.json`, environment variable
 | --- | --- |
 | `ConnectionStrings:DefaultConnection` | Database connection string |
 | `DatabaseProvider` | `PostgreSQL` (default) or `SqlServer` |
-| `Jwt:SecretKey` | Symmetric signing key for access tokens (32+ chars) |
+| `Jwt:SecretKey` | Symmetric signing key for access tokens (32+ chars). Required only under HS256 |
 | `Jwt:Issuer` / `Jwt:Audience` | JWT issuer/audience, defaults to `AuthService` |
 
 The service fails to start, with a message naming the setting, if the connection string is
-missing or `Jwt:SecretKey` is missing or shorter than 32 bytes.
+missing or the configured signing key is missing or too weak.
+
+### Token signing
+
+Two modes, selected by `Jwt:Algorithm`:
+
+| Key | Description |
+| --- | --- |
+| `Jwt:Algorithm` | `HS256` or `RS256`. Unset, it is inferred: `RS256` when a private key is configured, `HS256` otherwise |
+| `Jwt:PrivateKeyPem` / `Jwt:PrivateKeyPath` | PKCS#8 RSA private key (2048-bit minimum). Required under RS256 |
+| `Jwt:PreviousPublicKeyPem` / `Jwt:PreviousPublicKeyPath` | A retired public key, kept valid for verification while tokens signed with it are still alive |
+| `Jwt:PublicBaseUrl` | Public origin of this service, used to build `jwks_uri`. Defaults to the request's own scheme and host |
+
+**HS256** is the zero-ceremony default and is correct while this service is the only thing
+validating its own tokens. Verifying and signing are the same capability under a symmetric
+key, so any service given `Jwt:SecretKey` can also mint a token for any user with any role,
+including `SuperAdmin`.
+
+**RS256 is what you want the moment a second service validates these tokens.** This service
+keeps the private key and is the only thing that can issue; consumers fetch the public key and
+can only verify.
+
+```bash
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-signing.pem
+fly secrets set "Jwt__PrivateKeyPem=$(cat jwt-signing.pem)" --app your-authservice
+```
+
+Two endpoints are then served anonymously:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /.well-known/jwks.json` | The public key set. Empty under HS256 — the symmetric key is never published |
+| `GET /.well-known/openid-configuration` | Enough metadata for a consumer to point `JwtBearerOptions` at this service and discover the rest |
+
+**Rotating a key** is a rolling change rather than a flag day: generate a new keypair, move the
+old public key to `Jwt:PreviousPublicKeyPem`, set the new private key as `Jwt:PrivateKeyPem`,
+and deploy. Both keys appear in the JWKS and both verify; only the new one signs. Drop the
+previous key once every token issued before the rotation has expired
+(`Jwt:ExpirationMinutes`). The `kid` header is derived from the key itself, so consumers
+select the right one without configuration.
 
 Optional:
 
@@ -272,15 +311,34 @@ for the pre-v1 contract; prefer `/api/v1`. See `/swagger` for the full, generate
 `GET /health` is liveness (static). `GET /health/ready` is readiness and returns 503 until
 the schema is initialised and the database is reachable — point platform health checks there.
 
-Downstream services can validate the JWTs this service issues (same `Jwt:SecretKey`,
-`Issuer`, `Audience`) without calling back into AuthService — organization membership
-and role are embedded as claims (`organization`, `organization:{id}:role`).
+Downstream services validate the JWTs this service issues without calling back into
+AuthService — organization membership and role are embedded as claims (`organization`,
+`organization:{id}:role`).
 
-> **Note on the symmetric key.** With HS256, verifying and signing are the same capability:
-> any service holding `Jwt:SecretKey` can also mint a token for any user with any role,
-> including `SuperAdmin`. Only give it to services you would trust to do that. The trade-off
-> and the migration trigger are recorded in
-> [`docs/decisions/0002-token-signing-algorithm.md`](docs/decisions/0002-token-signing-algorithm.md).
+Under RS256 a consumer needs no key material at all, only this service's URL:
+
+```csharp
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.MetadataAddress = "https://your-authservice.fly.dev/.well-known/openid-configuration";
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidIssuer = "AuthService",     // Jwt:Issuer on this service
+            ValidAudience = "AuthService",   // Jwt:Audience on this service
+            ValidateIssuerSigningKey = true
+        };
+    });
+```
+
+The signing keys are fetched from the JWKS and refreshed on rotation. Nothing downstream can
+issue a token.
+
+Under HS256 a consumer validates with the same `Jwt:SecretKey`, `Issuer` and `Audience` — and
+thereby also gains the ability to mint tokens for any user with any role, including
+`SuperAdmin`. Only give the secret to services you would trust to do that; the reasoning and
+the decision to move to RS256 are recorded in
+[`docs/decisions/0002-token-signing-algorithm.md`](docs/decisions/0002-token-signing-algorithm.md).
 
 ## Testing
 

@@ -70,9 +70,14 @@ configuration defaults.
 Be aware of the following when evaluating this project:
 
 - **It has not had an external security audit.** No third party has reviewed this code.
-- **Tokens are signed with a symmetric HS256 key** shared with every service that validates
-  them, which means every such service can also mint tokens. Whether to move to RS256 with a
-  JWKS endpoint is tracked in the issue backlog.
+- **Token signing depends on how you configure it.** Under RS256 (`Jwt:PrivateKeyPem`) this
+  service holds the only key that can issue, and consumers verify against
+  `/.well-known/jwks.json`. Under HS256 — still the default when no keypair is configured —
+  the signing key is shared with every service that validates a token, and every one of those
+  services can therefore mint tokens for any user with any role. Configure RS256 before a
+  second service validates these tokens; the service logs a warning at startup while it is
+  signing symmetrically. See
+  [`docs/decisions/0002-token-signing-algorithm.md`](docs/decisions/0002-token-signing-algorithm.md).
 - **The demo deployment and `docker-compose.yml` ship deliberately weak, publicly documented
   credentials.** They are for evaluation. Do not point anything real at them.
 - **With no email provider configured, email is not sent at all.** The fallback logs that a
