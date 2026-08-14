@@ -70,6 +70,12 @@ jobs:
           dotnet tool install --global dotnet-ef
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
+      # dotnet-ef reads project metadata rather than building the whole solution, so it does
+      # not restore on its own — without this it fails on a missing project.assets.json for
+      # the migration assemblies, which have never been restored in this job.
+      - name: Restore
+        run: dotnet restore AuthService.sln
+
       # Two jobs in one, chosen by whether a migration set has been committed yet.
       #
       # Once it has, this is the guard that matters: a model change without a matching
