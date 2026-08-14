@@ -11,8 +11,10 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.0" />
+    <!-- Kept in step with Microsoft.AspNetCore.Mvc.Testing, which pulls these in
+         transitively at the same version; pinning them lower is an NU1605 downgrade error. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.18" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.18" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.18" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.18" />
   </ItemGroup>
