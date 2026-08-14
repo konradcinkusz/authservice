@@ -1,0 +1,65 @@
+name: Publish image
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggered automatically on every v* tag push (i.e. whenever a GitHub Release
+# is published against a new tag). Can also be run manually via workflow_dispatch.
+#
+# This repo does not deploy itself anywhere — it has no canonical hosted
+# instance of its own. It's meant to be reused: each consuming project runs
+# its own independent instance (own compute, own database, own JWT signing
+# key) rather than sharing one central deployment. This workflow's only job
+# is publishing a version-pinned, portable image to GHCR
+# (ghcr.io/konradcinkusz/authservice:<tag>) so a consuming project's own
+# deploy pipeline can pull a specific release without checking out this
+# repo's source at all. See the README's "Deploying your own instance"
+# section for how a consumer actually runs it.
+#
+# No secrets required. The only credential this workflow uses is the
+# automatic GITHUB_TOKEN, scoped packages:write on this job only.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-image
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.ref_name }}
+
+jobs:
+  publish-ghcr:
+    name: Publish portable image (GHCR)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate Docker to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/AuthService/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/konradcinkusz/authservice:${{ env.TAG }}
+            ghcr.io/konradcinkusz/authservice:latest
+          cache-from: type=gha,scope=publish-authservice
+          cache-to: type=gha,mode=max,scope=publish-authservice
