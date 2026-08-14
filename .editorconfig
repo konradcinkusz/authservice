@@ -51,7 +51,15 @@ csharp_new_line_before_finally = true
 csharp_prefer_braces = when_multiline:silent
 
 # Usings
-dotnet_sort_system_directives_first = false
+#
+# Deliberately NOT setting dotnet_sort_system_directives_first or
+# dotnet_separate_import_directive_groups. Setting either one activates
+# `dotnet format`'s organize-imports pass, which sorts alphabetically — and this
+# codebase groups framework usings (Microsoft.*, System.*) before project usings
+# (AuthService.*), which alphabetical ordering would reverse in every file.
+#
+# This .editorconfig exists to stop formatting drift, not to impose a new
+# convention and churn every file in the repository.
 csharp_using_directive_placement = outside_namespace:silent
 
 # Naming: interfaces start with I, types and members are PascalCase.

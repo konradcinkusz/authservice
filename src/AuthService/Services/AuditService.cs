@@ -12,8 +12,8 @@ namespace AuthService.Services;
 ///
 /// Writes are best-effort with respect to the caller: a failure to persist an audit row
 /// is logged loudly but never turns a successful operation into a failed one. The one
-/// exception is <see cref="EnqueueAsync"/>, which attaches the row to the caller's own
-/// unit of work so that the action and its audit record commit together.
+/// exception is <see cref="IAuditService.Enqueue"/>, which attaches the row to the caller's
+/// own unit of work so that the action and its audit record commit together.
 /// </summary>
 public interface IAuditService
 {

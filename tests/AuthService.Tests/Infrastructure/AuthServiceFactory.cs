@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using AuthService.Data;
 using AuthService.Extensions;
 using Microsoft.AspNetCore.Hosting;
@@ -35,8 +36,10 @@ public class AuthServiceFactory : WebApplicationFactory<Program>
     {
         Set("ASPNETCORE_ENVIRONMENT", "Testing");
 
-        // 48 bytes, comfortably over the 32-byte floor the startup guard enforces.
-        Set("Jwt__SecretKey", "test-signing-key-that-is-long-enough-for-hmac-256");
+        // Generated rather than a literal: 48 bytes of randomness, comfortably over the
+        // 32-byte floor the startup guard enforces, and nothing in the repository that
+        // looks like — or could be mistaken for — a real signing key.
+        Set("Jwt__SecretKey", Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)));
         Set("Jwt__Issuer", "AuthService");
         Set("Jwt__Audience", "AuthService");
         Set("Jwt__ExpirationMinutes", "60");
