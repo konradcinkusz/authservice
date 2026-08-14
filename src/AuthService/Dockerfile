@@ -1,7 +1,7 @@
 # Production Dockerfile for AuthService
 # Multi-stage build for an optimized production image
 
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 WORKDIR /app
 EXPOSE 8080
 
