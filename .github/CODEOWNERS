@@ -1,0 +1,21 @@
+# Default owner for everything.
+*                                        @konradcinkusz
+
+# Paths where a change is a change to the security model, listed separately so it is
+# visible as such in the review queue.
+
+# Token issuance and the key material behind it.
+/src/AuthService/Services/TokenService.cs      @konradcinkusz
+/src/AuthService/Services/JwtSigningKeys.cs    @konradcinkusz
+/src/AuthService/Services/TokenHasher.cs       @konradcinkusz
+
+# Account linking, enumeration safety, lockout — the paths a takeover goes through.
+/src/AuthService/Controllers/AuthController.cs          @konradcinkusz
+/src/AuthService/Controllers/ExternalAuthController.cs  @konradcinkusz
+/src/AuthService/Services/ProviderEmailVerifier.cs      @konradcinkusz
+
+# The switches that turn the safe defaults off.
+/src/AuthService/Services/AuthOptions.cs @konradcinkusz
+
+/.github/workflows/                      @konradcinkusz
+/docs/decisions/                         @konradcinkusz

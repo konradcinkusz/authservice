@@ -491,6 +491,11 @@ app.MapGet("/.well-known/openid-configuration", (HttpContext http) =>
 // Liveness: the process is up and serving. Restart-on-failure hangs off this.
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy", service = "AuthService" }));
 
+// The same answer under the name the architecture standard's checklist uses, so a
+// platform configured from that checklist finds it. Kept as an alias rather than a
+// rename: /health is what every existing deployment and the README already point at.
+app.MapGet("/alive", () => Results.Ok(new { status = "Healthy", service = "AuthService" }));
+
 // Readiness: the process can actually serve a request. Load balancers and platform
 // health checks belong here, not on /health — see docs/DEPLOYMENT.md.
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
