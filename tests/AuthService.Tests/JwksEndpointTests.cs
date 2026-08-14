@@ -59,3 +59,34 @@ public class JwksEndpointTests : IntegrationTestBase
         Assert.Equal(0, document.RootElement.GetProperty("response_types_supported").GetArrayLength());
     }
 }
+
+/// <summary>
+/// The registration form's one anonymous dependency. Without it a frontend must hardcode the
+/// consent versions, and bumping one silently breaks sign-up.
+/// </summary>
+public class ConsentVersionsEndpointTests : IntegrationTestBase
+{
+    [Fact]
+    public async Task Required_versions_are_served_without_a_token()
+    {
+        var response = await Client.GetAsync("/api/v1/auth/consents/versions");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("terms").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("privacy").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("cookies").GetString()));
+    }
+
+    [Fact]
+    public async Task Per_user_consent_status_still_requires_a_token()
+    {
+        // The versions are public; who accepted what is not.
+        var response = await Client.GetAsync("/api/v1/auth/consents");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+}

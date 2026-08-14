@@ -543,6 +543,26 @@ public class AuthController(
     }
 
     /// <summary>
+    /// Returns the consent document versions a registration must accept.
+    ///
+    /// Anonymous, and necessarily so: <c>POST /register</c> rejects any request that does not
+    /// accept the exact versions this instance is configured with, and a sign-up form has no
+    /// token yet. Without this a frontend has to hardcode the versions and silently breaks
+    /// registration the moment one is bumped — which is the whole point of them being
+    /// versioned.
+    ///
+    /// It discloses nothing: these are the identifiers of published legal documents.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("consents/versions")]
+    [ProducesResponseType(typeof(ConsentVersionsResponse), StatusCodes.Status200OK)]
+    public ActionResult<ConsentVersionsResponse> GetConsentVersions()
+    {
+        var required = _consentSettings.Value;
+        return Ok(new ConsentVersionsResponse(required.Terms, required.Privacy, required.Cookies));
+    }
+
+    /// <summary>
     /// Returns the latest consent status for each legal document and the current required versions.
     /// </summary>
     [Authorize]
