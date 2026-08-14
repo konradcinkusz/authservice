@@ -183,6 +183,45 @@ git push origin v1.0.0
 (no-op if already running), then deploys `authservice` with the new image and pushes
 the configured secrets.
 
+### Using this from another project
+
+This service is meant to be reused as-is: each consuming project runs its **own
+independent instance** — own Fly app, own Postgres, own `Jwt:SecretKey` — rather than
+sharing one central deployment across products. There's no source-level dependency to
+take on; every `v*` release also publishes a version-pinned image to
+`ghcr.io/konradcinkusz/authservice:<tag>` (alongside the `registry.fly.io` push this
+repo's own `deploy-authservice` job uses internally), so another project's Fly config
+just references that image directly:
+
+```toml
+# <consuming-project>/flyio/authservice.fly.toml
+app = "<yourproject>-authservice"
+primary_region = "fra"
+
+[build]
+  image = "ghcr.io/konradcinkusz/authservice:v1.0.0"   # pin a real tag, don't float :latest
+
+[env]
+  ASPNETCORE_ENVIRONMENT = "Production"
+  ASPNETCORE_URLS = "http://+:8080"
+  DatabaseProvider = "PostgreSQL"
+  Jwt__Issuer = "<YourProject>"
+  Jwt__Audience = "<YourProject>"
+```
+
+Deploy it the same way this repo deploys its own instance — `flyctl deploy --config
+flyio/authservice.fly.toml --app <yourproject>-authservice --image
+ghcr.io/konradcinkusz/authservice:v1.0.0`, with `ConnectionStrings__DefaultConnection`
+and `Jwt__SecretKey` set as Fly secrets pointing at *that project's own* Postgres app
+and *that project's own*, independently generated signing key. Never reuse a signing
+key or database across two projects' instances — each is meant to be a fully
+independent trust root, not a shared identity provider.
+
+One-time step after this repo's first GHCR-publishing release: the package is created
+private by default even though the repo is public — go to the package's own Settings
+on GitHub and set visibility to Public, or every consumer will need its own
+`ghcr.io` pull credentials.
+
 ## API overview
 
 All endpoints are under `/api`. See `/swagger` for the full, generated reference.

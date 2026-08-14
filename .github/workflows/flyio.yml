@@ -8,6 +8,15 @@ name: Fly.io CI/CD
 #   deploy-postgres  ──┐
 #   build             ──┴──▶  deploy-authservice
 #
+# This repo is meant to be reused: each consuming project runs its own
+# independent instance (own Fly app, own Postgres, own JWT signing key) rather
+# than sharing one central deployment. `build` publishes a version-pinned,
+# portable image to GHCR (ghcr.io/konradcinkusz/authservice:<tag>) specifically
+# so other projects' own Fly deploy workflows can pull a specific release
+# without checking out this repo's source — no build-time coupling between
+# this service and anything that consumes it. The registry.fly.io push next to
+# it is unrelated: that one only feeds *this* repo's own self-deploy below.
+#
 # Secrets scope: Settings > Environments > production
 # Required secrets:
 #   FLY_API_TOKEN            — Fly.io deploy token (flyctl auth token / fly tokens create deploy)
@@ -21,10 +30,13 @@ name: Fly.io CI/CD
 # Optional variables (Settings > Environments > production > Variables):
 #   CORS_ALLOWED_ORIGIN       — Frontend origin allowed to call this API
 #
-# The Fly app names below ("authservice" / "authservice-postgres") must be
-# globally unique on Fly.io. If they're already taken, change APP_AUTHSERVICE /
-# APP_POSTGRES below (and the `app = "..."` lines in flyio/*.fly.toml) before
-# the first deploy.
+# The Fly app names below ("authservice" / "authservice-postgres") are for
+# *this repo's own* reference deployment and must be globally unique on
+# Fly.io — if they're already taken, change APP_AUTHSERVICE / APP_POSTGRES
+# below (and the `app = "..."` lines in flyio/*.fly.toml) before the first
+# deploy. Every other project deploying its own instance picks its own names
+# entirely independently (e.g. "fseclub-authservice") in its own repo — none
+# of that touches this file.
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -115,12 +127,18 @@ jobs:
 
   # ============================================================
   # Build & push the AuthService image, runs in parallel with
-  # deploy-postgres.
+  # deploy-postgres. Pushes to two registries:
+  #   registry.fly.io/<APP_AUTHSERVICE>  — feeds this repo's own deploy-authservice job below
+  #   ghcr.io/konradcinkusz/authservice  — the portable, version-pinned artifact other
+  #                                        projects' own Fly deploys pull from
   # ============================================================
   build:
     name: Build & Push Image
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -139,6 +157,13 @@ jobs:
       - name: Authenticate Docker to registry.fly.io
         run: flyctl auth docker
 
+      - name: Authenticate Docker to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push AuthService
         uses: docker/build-push-action@v6
         with:
@@ -150,6 +175,8 @@ jobs:
           tags: |
             registry.fly.io/${{ env.APP_AUTHSERVICE }}:${{ env.TAG }}
             registry.fly.io/${{ env.APP_AUTHSERVICE }}:latest
+            ghcr.io/konradcinkusz/authservice:${{ env.TAG }}
+            ghcr.io/konradcinkusz/authservice:latest
           cache-from: type=gha,scope=flyio-authservice
           cache-to: type=gha,mode=max,scope=flyio-authservice
 
