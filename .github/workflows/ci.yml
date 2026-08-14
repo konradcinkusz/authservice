@@ -54,6 +54,70 @@ jobs:
       - name: Verify formatting
         run: dotnet format AuthService.sln --verify-no-changes --severity error
 
+  migrations:
+    name: Migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Install dotnet-ef
+        run: |
+          dotnet tool install --global dotnet-ef
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      # Two jobs in one, chosen by whether a migration set has been committed yet.
+      #
+      # Once it has, this is the guard that matters: a model change without a matching
+      # migration is invisible under EnsureCreated and fails at runtime under Migrate, which
+      # is the failure mode issue #17 is about. `has-pending-model-changes` catches it here.
+      #
+      # Until then it proves the generation path actually works — the projects, the
+      # design-time factory and the provider wiring — and uploads the result, so committing
+      # the initial set is a download rather than a local .NET SDK install.
+      - name: Generate or verify migrations
+        run: |
+          set -euo pipefail
+
+          committed=false
+          for provider in PostgreSQL SqlServer; do
+            if compgen -G "src/AuthService.Migrations.${provider}/*.cs" > /dev/null; then
+              committed=true
+            fi
+          done
+
+          if [ "$committed" = true ]; then
+            echo "Migration set is committed — checking it matches the model."
+            for provider in PostgreSQL SqlServer; do
+              echo "── ${provider} ──"
+              DATABASE_PROVIDER="${provider}" \
+              Database__MigrationsAssembly="AuthService.Migrations.${provider}" \
+              dotnet ef migrations has-pending-model-changes \
+                --project "src/AuthService.Migrations.${provider}" \
+                --startup-project src/AuthService \
+                --context ApplicationDbContext
+            done
+            echo "Migrations are in sync with the model."
+          else
+            echo "No migration set committed yet — proving generation works instead."
+            ./scripts/generate-migrations.sh InitialCreate
+            echo "::notice::Migrations generated. Download the 'migrations' artifact and commit it to switch Database__SchemaMode to Migrate."
+          fi
+
+      - name: Upload generated migrations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migrations
+          path: |
+            src/AuthService.Migrations.PostgreSQL/**/*.cs
+            src/AuthService.Migrations.SqlServer/**/*.cs
+          if-no-files-found: ignore
+
   docker:
     name: Docker build
     runs-on: ubuntu-latest

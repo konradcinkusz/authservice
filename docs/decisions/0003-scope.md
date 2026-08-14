@@ -1,6 +1,6 @@
 # ADR 0003 — Scope: stay small
 
-**Status:** Proposed (tracks issue #30)
+**Status:** Accepted (closes issue #30)
 **Date:** 2026-08-14
 
 ## Context
@@ -33,9 +33,17 @@ lockout surface.
 
 ### What it excludes
 
-- Becoming an OIDC provider (authorization code flow, consent screens, client registration,
-  `/.well-known/openid-configuration`). That is Keycloak's and Ory's job, and re-adding
-  OpenIddict would undo the extraction decision.
+- Becoming an OIDC **provider**: authorization code flow, an authorization endpoint, a
+  standards-shaped token endpoint, consent screens, client registration, introspection. That is
+  Keycloak's and Ory's job, and re-adding OpenIddict would undo the extraction decision.
+
+  This exclusion is about *flows*, not about the file name. An earlier revision of this ADR
+  listed `/.well-known/openid-configuration` itself as out of scope; that conflated the
+  discovery document with the authorization server it usually accompanies. ADR 0002 ships the
+  document, because a consumer setting `JwtBearerOptions.Authority` needs it to find the JWKS
+  and nothing else. It advertises an empty `response_types_supported` precisely so the
+  distinction is machine-readable: there are no flows here to discover. Key discovery is in
+  scope; being an authorization server is not.
 - SAML, LDAP or Active Directory federation.
 - SCIM provisioning.
 - A built-in admin UI.

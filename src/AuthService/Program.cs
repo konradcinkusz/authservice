@@ -492,7 +492,7 @@ app.MapGet("/.well-known/openid-configuration", (HttpContext http) =>
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy", service = "AuthService" }));
 
 // Readiness: the process can actually serve a request. Load balancers and platform
-// health checks belong here — see flyio/authservice.fly.toml.
+// health checks belong here, not on /health — see docs/DEPLOYMENT.md.
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = check => check.Tags.Contains("ready"),
