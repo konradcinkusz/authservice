@@ -42,3 +42,19 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:csharp"
+          # Written to a predictable path so the run below can keep it.
+          output: sarif-results
+
+      # The Security tab is the primary view, but it is only visible to accounts with
+      # write access — which leaves contributors, and anyone triaging from a CI log,
+      # unable to see what a failing CodeQL check actually found. The SARIF has rule
+      # ids, file paths, line numbers and the full data-flow path for every alert, so
+      # keeping it as an artifact makes the findings reviewable by anyone who can read
+      # the run.
+      - name: Upload SARIF results as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif
+          path: sarif-results/*.sarif
+          if-no-files-found: warn
