@@ -101,6 +101,33 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
         }
     }
 
+    public async Task SendEmailVerificationAsync(string toEmail, string verificationToken, string verificationUrl)
+    {
+        var client = CreateClient();
+        var from = GetFromAddress();
+        var to = new EmailAddress(toEmail);
+        var subject = $"Verify your email address for {AppName}";
+        var plainText = $"Confirm this address to finish setting up your {AppName} account:\n\n{verificationUrl}\n\n" +
+                        "If you did not create this account, you can safely ignore this email.";
+        var html = $"<p>Confirm this address to finish setting up your <strong>{AppName}</strong> account:</p>" +
+                   $"<p><a href=\"{verificationUrl}\">Verify email address</a></p>" +
+                   $"<p>If you did not create this account, you can safely ignore this email.</p>";
+
+        var msg = MailHelper.CreateSingleEmail(from, to, subject, plainText, html);
+        var response = await client.SendEmailAsync(msg);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Body.ReadAsStringAsync();
+            _logger.LogError("SendGrid failed to send verification email to {Email}. Status: {Status}. Body: {Body}",
+                toEmail, response.StatusCode, body);
+        }
+        else
+        {
+            _logger.LogInformation("Verification email sent to {Email}", toEmail);
+        }
+    }
+
     public async Task SendWelcomeEmailAsync(string toEmail, string userName)
     {
         var client = CreateClient();

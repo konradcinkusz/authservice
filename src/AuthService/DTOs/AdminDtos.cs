@@ -72,6 +72,46 @@ public record AdminAssignRoleRequest(
 );
 
 /// <summary>
+/// Request to lock a user account.
+/// </summary>
+public record AdminLockUserRequest(
+    /// <summary>
+    /// When the lock expires. Null means indefinite — the account stays locked until an
+    /// admin unlocks it.
+    /// </summary>
+    DateTimeOffset? Until
+);
+
+/// <summary>
+/// A single security audit record.
+/// </summary>
+public record AuditEventDto(
+    Guid Id,
+    DateTime OccurredAt,
+    string Action,
+    string? ActorUserId,
+    string? ActorEmail,
+    string? TargetUserId,
+    string? TargetOrganizationId,
+    string? IpAddress,
+    string? UserAgent,
+    bool Succeeded,
+    /// <summary>Action-specific JSON detail (old/new role, lockout end, provider name...)</summary>
+    string? Metadata
+);
+
+/// <summary>
+/// Paginated list response for audit events
+/// </summary>
+public record AuditEventListResponse(
+    IReadOnlyList<AuditEventDto> Events,
+    int TotalCount,
+    int Page,
+    int PageSize,
+    int TotalPages
+);
+
+/// <summary>
 /// Summary info for a soft-deleted user in the admin deleted-users list
 /// </summary>
 public record DeletedUserSummaryDto(

@@ -1,0 +1,43 @@
+version: 2
+
+updates:
+  # NuGet — the packages where a CVE actually matters here: ASP.NET Core Identity,
+  # the JWT handler, the EF providers, SendGrid.
+  - package-ecosystem: nuget
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    groups:
+      # One PR for the framework packages, which version in lockstep.
+      microsoft:
+        patterns:
+          - "Microsoft.*"
+          - "System.*"
+        update-types:
+          - minor
+          - patch
+      test-tooling:
+        patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.Sdk"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - ci
+
+  - package-ecosystem: docker
+    directory: "/src/AuthService"
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies

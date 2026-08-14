@@ -95,7 +95,69 @@ public record UserInfoResponse(
     /// True when the user must accept the current Terms/Privacy versions before
     /// continuing to use the application (either never accepted or an old version).
     /// </summary>
-    bool RequiresConsent
+    bool RequiresConsent,
+
+    /// <summary>Whether the email address has been verified</summary>
+    bool EmailConfirmed = true,
+
+    /// <summary>Whether two-factor authentication is active on the account</summary>
+    bool TwoFactorEnabled = false
+);
+
+/// <summary>
+/// Returned by registration when the address must be verified before the account can be used.
+/// No tokens are issued at this point.
+/// </summary>
+public record RegistrationPendingVerificationResponse(
+    string UserId,
+    string Email,
+    string Message,
+    bool EmailVerificationRequired = true
+);
+
+/// <summary>
+/// Returned by login when the account has two-factor authentication enabled. The challenge
+/// token is scoped to completing this login only and cannot be used as an access token.
+/// </summary>
+public record TwoFactorRequiredResponse(
+    bool RequiresTwoFactor,
+    string ChallengeToken,
+    int ExpiresIn
+);
+
+/// <summary>
+/// Redeems the single-use code from the OAuth callback redirect for a token pair.
+/// </summary>
+public record OAuthExchangeRequest(
+    [Required(ErrorMessage = "Code is required")]
+    string Code
+);
+
+/// <summary>Request to confirm an email address.</summary>
+public record VerifyEmailRequest(
+    [Required(ErrorMessage = "Email is required")]
+    [EmailAddress(ErrorMessage = "Invalid email format")]
+    string Email,
+
+    [Required(ErrorMessage = "Verification token is required")]
+    string Token
+);
+
+/// <summary>Request a fresh verification email.</summary>
+public record ResendVerificationRequest(
+    [Required(ErrorMessage = "Email is required")]
+    [EmailAddress(ErrorMessage = "Invalid email format")]
+    string Email
+);
+
+/// <summary>
+/// Result of a password change, including a replacement token pair when the service is
+/// configured to keep the calling session alive.
+/// </summary>
+public record ChangePasswordResponse(
+    string Message,
+    bool SessionsRevoked,
+    TokenResponse? Tokens
 );
 
 /// <summary>

@@ -1,0 +1,79 @@
+# Formatting rules enforced by `dotnet format --verify-no-changes` in CI.
+# These describe the style the codebase already uses; they are not a new convention.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{csproj,props,targets}]
+indent_size = 2
+
+[*.cs]
+indent_size = 4
+
+# Namespaces
+csharp_style_namespace_declarations = file_scoped:suggestion
+
+# `var` where the type is apparent, which is what the codebase does.
+csharp_style_var_for_built_in_types = false:silent
+csharp_style_var_when_type_is_apparent = true:silent
+csharp_style_var_elsewhere = false:silent
+
+# Expression-bodied members are used for one-liners only.
+csharp_style_expression_bodied_methods = when_on_single_line:silent
+csharp_style_expression_bodied_properties = true:silent
+csharp_style_expression_bodied_accessors = true:silent
+
+# Modern language features already used throughout.
+csharp_style_prefer_primary_constructors = true:suggestion
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+csharp_prefer_simple_using_statement = true:suggestion
+csharp_style_prefer_range_operator = true:suggestion
+csharp_style_prefer_index_operator = true:suggestion
+
+# Braces and newlines
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_prefer_braces = when_multiline:silent
+
+# Usings
+#
+# Deliberately NOT setting dotnet_sort_system_directives_first or
+# dotnet_separate_import_directive_groups. Setting either one activates
+# `dotnet format`'s organize-imports pass, which sorts alphabetically — and this
+# codebase groups framework usings (Microsoft.*, System.*) before project usings
+# (AuthService.*), which alphabetical ordering would reverse in every file.
+#
+# This .editorconfig exists to stop formatting drift, not to impose a new
+# convention and churn every file in the repository.
+csharp_using_directive_placement = outside_namespace:silent
+
+# Naming: interfaces start with I, types and members are PascalCase.
+dotnet_naming_rule.interfaces_start_with_i.symbols = interface_symbol
+dotnet_naming_rule.interfaces_start_with_i.style = prefix_with_i
+dotnet_naming_rule.interfaces_start_with_i.severity = suggestion
+
+dotnet_naming_symbols.interface_symbol.applicable_kinds = interface
+dotnet_naming_style.prefix_with_i.required_prefix = I
+dotnet_naming_style.prefix_with_i.capitalization = pascal_case
+
+dotnet_naming_rule.types_are_pascal_case.symbols = type_symbols
+dotnet_naming_rule.types_are_pascal_case.style = pascal_case_style
+dotnet_naming_rule.types_are_pascal_case.severity = suggestion
+
+dotnet_naming_symbols.type_symbols.applicable_kinds = class, struct, enum, delegate
+dotnet_naming_style.pascal_case_style.capitalization = pascal_case

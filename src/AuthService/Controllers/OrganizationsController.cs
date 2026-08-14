@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using AuthService.Models;
 using AuthService.DTOs;
 using AuthService.Data;
@@ -10,18 +12,38 @@ using AuthService.Services;
 namespace AuthService.Controllers;
 
 /// <summary>
-/// Manages organization operations including creation, membership, and invitations
+/// Manages organization operations including creation, membership, and invitations.
+///
+/// The role model this controller enforces is documented in docs/roles.md — keep the two
+/// in step when adding an endpoint.
 /// </summary>
 [Authorize]
 [ApiController]
-[Route("api/[controller]")]
+[EnableRateLimiting("api")]
+[Route("api/v1/[controller]")]
+[Route("api/[controller]")] // Unversioned alias. Prefer /api/v1.
 public class OrganizationsController(
     ApplicationDbContext _context,
     UserManager<ApplicationUser> _userManager,
     ILogger<OrganizationsController> _logger,
-    InvitationService _invitationService
+    InvitationService _invitationService,
+    IOptions<AuthOptions> _authOptions,
+    EmailCapabilities _emailCapabilities,
+    IAuditService _audit
 ) : AuthControllerBase
 {
+    /// <summary>
+    /// Counts the Owners of an organization. Three endpoints need this to avoid stranding an
+    /// organization with nobody who can administer it, so it lives in one place.
+    /// </summary>
+    private Task<int> CountOwnersAsync(string organizationId) =>
+        _context.OrganizationMemberships
+            .IgnoreQueryFilters()
+            .CountAsync(om => om.OrganizationId == organizationId && om.Role == OrganizationRole.Owner);
+
+    private bool RequireConfirmedEmail =>
+        _authOptions.Value.RequireConfirmedEmail ?? _emailCapabilities.CanSendEmail;
+
     /// <summary>
     /// Gets all organizations the authenticated user is a member of.
     /// Includes soft-deleted organizations for owners so they can see deletion status and restore.
@@ -161,6 +183,9 @@ public class OrganizationsController(
 
         _context.OrganizationMemberships.Add(membership);
 
+        _audit.Enqueue(AuditAction.OrganizationCreated, actorUserId: userId, targetUserId: userId,
+            targetOrganizationId: organization.Id, metadata: new { name = organization.Name });
+
         await _context.SaveChangesAsync();
 
         _logger.LogInformation("User {UserId} created organization {OrganizationId}", userId, organization.Id);
@@ -241,6 +266,9 @@ public class OrganizationsController(
         organization.DeletedByUserId = userId;
         organization.ScheduledPermanentDeletionAt = DateTime.UtcNow.AddDays(Organization.DefaultRetentionDays);
 
+        _audit.Enqueue(AuditAction.OrganizationDeleted, actorUserId: userId, targetOrganizationId: id,
+            metadata: new { scheduledPermanentDeletionAt = organization.ScheduledPermanentDeletionAt });
+
         await _context.SaveChangesAsync();
 
         _logger.LogInformation(
@@ -288,6 +316,8 @@ public class OrganizationsController(
         organization.DeletedByUserId = null;
         organization.ScheduledPermanentDeletionAt = null;
 
+        _audit.Enqueue(AuditAction.OrganizationRestored, actorUserId: userId, targetOrganizationId: id);
+
         await _context.SaveChangesAsync();
 
         _logger.LogInformation("User {UserId} restored organization {OrganizationId}", userId, id);
@@ -324,6 +354,10 @@ public class OrganizationsController(
             return Forbid();
 
         _context.Organizations.Remove(organization);
+
+        _audit.Enqueue(AuditAction.OrganizationHardDeleted, actorUserId: userId, targetOrganizationId: id,
+            metadata: new { name = organization.Name });
+
         await _context.SaveChangesAsync();
 
         _logger.LogInformation("User {UserId} hard-deleted organization {OrganizationId}", userId, id);
@@ -351,6 +385,7 @@ public class OrganizationsController(
             return Forbid();
 
         var existingUser = await _userManager.FindByEmailAsync(request.Email);
+
         if (existingUser != null)
         {
             var existingMembership = await _context.OrganizationMemberships
@@ -369,6 +404,19 @@ public class OrganizationsController(
         if (!Enum.TryParse<OrganizationRole>(request.Role, true, out var role))
             return BadRequest(new { error = "Invalid role" });
 
+        // SECURITY: an Admin may invite, but not at a level above their own. Without this an
+        // Admin invites a second address they control as Owner, accepts it, and holds rights
+        // — delete the organization, change any role — that Admins are explicitly denied.
+        if (role == OrganizationRole.Owner && membership.Role != OrganizationRole.Owner)
+        {
+            _logger.LogWarning(
+                "User {UserId} (role {Role}) attempted to invite {Email} as Owner of organization {OrganizationId}",
+                userId, membership.Role, request.Email, id);
+
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new { error = "Only an Owner can invite a new member at the Owner role." });
+        }
+
         var invitation = new OrganizationInvitation
         {
             OrganizationId = id,
@@ -381,6 +429,10 @@ public class OrganizationsController(
         await _context.SaveChangesAsync();
 
         _logger.LogInformation("User {UserId} invited {Email} to organization {OrganizationId}", userId, request.Email, id);
+
+        await _audit.LogAsync(AuditAction.OrgMemberInvited, actorUserId: userId, targetOrganizationId: id,
+            targetUserId: existingUser?.Id,
+            metadata: new { email = request.Email, role = role.ToString() });
 
         var organization = await _context.Organizations.FindAsync(id);
         var inviter = await _userManager.FindByIdAsync(userId);
@@ -433,6 +485,18 @@ public class OrganizationsController(
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null) return NotFound();
 
+        // Invitations are matched on email address, so an unverified address is otherwise
+        // enough to join an organization that invited someone else entirely. That is an
+        // access-control consequence, not just hygiene.
+        if (RequireConfirmedEmail && !user.EmailConfirmed)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = "Verify your email address before accepting an organization invitation.",
+                emailVerificationRequired = true
+            });
+        }
+
         var invitation = await _context.OrganizationInvitations
             .Include(oi => oi.Organization)
             .FirstOrDefaultAsync(oi => oi.Token == request.Token && oi.Email == user.Email);
@@ -473,6 +537,10 @@ public class OrganizationsController(
 
         invitation.IsAccepted = true;
         invitation.AcceptedAt = DateTime.UtcNow;
+
+        _audit.Enqueue(AuditAction.OrgMemberJoined, actorUserId: userId, targetUserId: userId,
+            targetOrganizationId: invitation.OrganizationId,
+            metadata: new { role = invitation.Role.ToString(), via = "invitation" });
 
         try
         {
@@ -709,17 +777,21 @@ public class OrganizationsController(
         if (targetMembership.Role == OrganizationRole.Owner && currentUserMembership.Role != OrganizationRole.Owner)
             return Forbid();
 
-        // Cannot remove yourself if you're the only owner
-        if (userId == currentUserId && currentUserMembership.Role == OrganizationRole.Owner)
+        // Removing the last Owner — yourself or anyone else — strands the organization.
+        if (targetMembership.Role == OrganizationRole.Owner && await CountOwnersAsync(organizationId) == 1)
         {
-            var ownerCount = await _context.OrganizationMemberships
-                .CountAsync(om => om.OrganizationId == organizationId && om.Role == OrganizationRole.Owner);
-
-            if (ownerCount == 1)
-                return BadRequest(new { error = "Cannot remove the only owner. Transfer ownership or delete the organization instead." });
+            return BadRequest(new
+            {
+                error = "Cannot remove the only owner. Transfer ownership (POST /api/v1/organizations/{id}/transfer-ownership) " +
+                        "or delete the organization instead."
+            });
         }
 
         _context.OrganizationMemberships.Remove(targetMembership);
+
+        _audit.Enqueue(AuditAction.OrgMemberRemoved, actorUserId: currentUserId, targetUserId: userId,
+            targetOrganizationId: organizationId, metadata: new { removedRole = targetMembership.Role.ToString() });
+
         await _context.SaveChangesAsync();
 
         _logger.LogInformation("User {CurrentUserId} removed user {UserId} from organization {OrganizationId}", currentUserId, userId, organizationId);
@@ -746,16 +818,20 @@ public class OrganizationsController(
         if (membership == null)
             return NotFound(new { error = "Organization not found" });
 
-        if (membership.Role == OrganizationRole.Owner)
+        if (membership.Role == OrganizationRole.Owner && await CountOwnersAsync(organizationId) == 1)
         {
-            var ownerCount = await _context.OrganizationMemberships
-                .CountAsync(om => om.OrganizationId == organizationId && om.Role == OrganizationRole.Owner);
-
-            if (ownerCount == 1)
-                return BadRequest(new { error = "You are the only owner. Transfer ownership to another member before leaving, or delete the organization." });
+            return BadRequest(new
+            {
+                error = "You are the only owner. Transfer ownership to another member " +
+                        "(POST /api/v1/organizations/{id}/transfer-ownership) before leaving, or delete the organization."
+            });
         }
 
         _context.OrganizationMemberships.Remove(membership);
+
+        _audit.Enqueue(AuditAction.OrgMemberRemoved, actorUserId: currentUserId, targetUserId: currentUserId,
+            targetOrganizationId: organizationId, metadata: new { reason = "left" });
+
         await _context.SaveChangesAsync();
 
         _logger.LogInformation("User {CurrentUserId} left organization {OrganizationId}", currentUserId, organizationId);
@@ -795,12 +871,104 @@ public class OrganizationsController(
         if (!Enum.TryParse<OrganizationRole>(request.Role, true, out var newRole))
             return BadRequest(new { error = "Invalid role" });
 
+        var previousRole = targetMembership.Role;
+
+        if (previousRole == newRole)
+            return Ok(new { message = "Member role updated successfully" });
+
+        // Demoting the last Owner leaves an organization nobody can administer: every
+        // recovery path (promote, delete, restore, hard-delete) requires Owner, so the only
+        // way back is direct database access. RemoveMember and LeaveOrganization already
+        // guard this; this endpoint was the one path that did not.
+        if (previousRole == OrganizationRole.Owner &&
+            newRole != OrganizationRole.Owner &&
+            await CountOwnersAsync(organizationId) == 1)
+        {
+            return BadRequest(new
+            {
+                error = "Cannot demote the only owner. Promote another member to Owner first, " +
+                        "or use POST /api/v1/organizations/{id}/transfer-ownership."
+            });
+        }
+
         targetMembership.Role = newRole;
+
+        _audit.Enqueue(AuditAction.OrgMemberRoleChanged, actorUserId: currentUserId, targetUserId: userId,
+            targetOrganizationId: organizationId,
+            metadata: new { from = previousRole.ToString(), to = newRole.ToString() });
+
         await _context.SaveChangesAsync();
 
-        _logger.LogInformation("User {CurrentUserId} updated role of user {UserId} in organization {OrganizationId} to {Role}",
-            currentUserId, userId, organizationId, newRole);
+        _logger.LogInformation("User {CurrentUserId} updated role of user {UserId} in organization {OrganizationId} from {PreviousRole} to {Role}",
+            currentUserId, userId, organizationId, previousRole, newRole);
 
         return Ok(new { message = "Member role updated successfully" });
+    }
+
+    /// <summary>
+    /// Transfers ownership of the organization to another member (requires Owner role).
+    ///
+    /// Two endpoints have always told users to "transfer ownership" without one existing;
+    /// the workaround — promote a second Owner, then demote yourself — transiently creates
+    /// two Owners and is not what the error messages imply. This does it in one step.
+    /// </summary>
+    [HttpPost("{organizationId}/transfer-ownership")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> TransferOwnership(
+        string organizationId,
+        [FromBody] TransferOwnershipRequest request)
+    {
+        var currentUserId = GetCurrentUserId();
+        if (currentUserId == null) return Unauthorized();
+
+        if (string.Equals(request.ToUserId, currentUserId, StringComparison.Ordinal))
+            return BadRequest(new { error = "You already own this organization." });
+
+        var currentUserMembership = await _context.OrganizationMemberships
+            .FirstOrDefaultAsync(om => om.OrganizationId == organizationId && om.UserId == currentUserId);
+
+        if (currentUserMembership == null)
+            return NotFound(new { error = "Organization not found" });
+
+        if (currentUserMembership.Role != OrganizationRole.Owner)
+            return Forbid();
+
+        var targetMembership = await _context.OrganizationMemberships
+            .FirstOrDefaultAsync(om => om.OrganizationId == organizationId && om.UserId == request.ToUserId);
+
+        if (targetMembership == null)
+            return NotFound(new { error = "The new owner must already be a member of the organization." });
+
+        // The outgoing Owner keeps Admin rather than being dropped to Member: transferring
+        // ownership is a handover, not a resignation, and demoting someone two levels by
+        // surprise is the more damaging default. Pass retainAdminRole=false to step all the
+        // way down to Member.
+        var outgoingRole = request.RetainAdminRole ? OrganizationRole.Admin : OrganizationRole.Member;
+
+        targetMembership.Role = OrganizationRole.Owner;
+        currentUserMembership.Role = outgoingRole;
+
+        _audit.Enqueue(AuditAction.OrgOwnershipTransferred, actorUserId: currentUserId,
+            targetUserId: request.ToUserId, targetOrganizationId: organizationId,
+            metadata: new { previousOwnerNewRole = outgoingRole.ToString() });
+
+        // Both role changes land in one SaveChanges, so the organization is never
+        // momentarily ownerless or briefly double-owned.
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "User {CurrentUserId} transferred ownership of organization {OrganizationId} to {NewOwnerId} (retained {Role})",
+            currentUserId, organizationId, request.ToUserId, outgoingRole);
+
+        return Ok(new
+        {
+            message = "Ownership transferred successfully",
+            newOwnerUserId = request.ToUserId,
+            yourRole = outgoingRole.ToString()
+        });
     }
 }

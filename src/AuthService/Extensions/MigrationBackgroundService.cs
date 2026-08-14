@@ -1,4 +1,5 @@
 using AuthService.Data;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -26,9 +27,11 @@ public class MigrationBackgroundService(
             try
             {
                 var context = services.GetRequiredService<ApplicationDbContext>();
-                logger.LogInformation("Initializing AuthService database (attempt {Attempt}/{Max})...", attempt, maxAttempts);
+                var mode = services.GetRequiredService<IConfiguration>().GetSchemaMode();
+                logger.LogInformation("Initializing AuthService database in {Mode} mode (attempt {Attempt}/{Max})...",
+                    mode, attempt, maxAttempts);
 
-                await DatabaseProviderExtensions.InitializeDatabaseAsync(context, logger, stoppingToken);
+                await DatabaseProviderExtensions.InitializeDatabaseAsync(context, logger, mode, stoppingToken);
 
                 migrationSignal.SetCompleted();
 

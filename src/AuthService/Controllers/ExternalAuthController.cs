@@ -2,8 +2,10 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 using System.Security.Claims;
 using System.Text.RegularExpressions;
+using AuthService.DTOs;
 using AuthService.Models;
 using AuthService.Services;
 
@@ -13,12 +15,17 @@ namespace AuthService.Controllers;
 /// Handles external OAuth provider authentication (Google, GitHub, etc.)
 /// </summary>
 [ApiController]
-[Route("api/external-auth")]
+[Route("api/v1/external-auth")]
+[Route("api/external-auth")] // Unversioned alias. Prefer /api/v1.
 public class ExternalAuthController(
     UserManager<ApplicationUser> _userManager,
     SignInManager<ApplicationUser> _signInManager,
     ITokenService _tokenService,
     IConfiguration _configuration,
+    IOptions<AuthOptions> _authOptions,
+    IProviderEmailVerifier _emailVerifier,
+    IOAuthExchangeCodeService _exchangeCodes,
+    IAuditService _audit,
     ILogger<ExternalAuthController> _logger,
     IEmailService _emailService
 ) : ControllerBase
@@ -51,7 +58,7 @@ public class ExternalAuthController(
             .ToArray();
 
         // Validate returnUrl against the allowed origins to prevent open-redirect attacks
-        // where a crafted returnUrl could cause JWT tokens to be sent to an attacker's server.
+        // where a crafted returnUrl could cause the exchange code to be sent to an attacker's server.
         if (returnUrl != null && !IsAllowedReturnUrl(returnUrl, allAllowedBaseUrls))
         {
             _logger.LogWarning("Rejected OAuth login with disallowed returnUrl: {ReturnUrl}", returnUrl);
@@ -64,6 +71,9 @@ public class ExternalAuthController(
         // IMPORTANT: must be a clean URL with NO query parameters — Google does
         // an exact match against the registered redirect URI.
         var callbackBaseUrl = _configuration["OAuth:CallbackBaseUrl"];
+        // Deliberately the unversioned path: this exact string is registered as the redirect
+        // URI at Google and GitHub, and changing it would require re-registering it there.
+        // The /api/... alias resolves to the same action as /api/v1/....
         var callbackUrl = string.IsNullOrWhiteSpace(callbackBaseUrl)
             ? Url.Action(nameof(Callback), "ExternalAuth", values: null, protocol: Request.Scheme)!
             : $"{callbackBaseUrl.TrimEnd('/')}/api/external-auth/callback";
@@ -79,7 +89,8 @@ public class ExternalAuthController(
 
     /// <summary>
     /// Callback endpoint invoked by the external OAuth provider after authentication.
-    /// Finds or creates the user, generates JWT tokens, and redirects to the frontend.
+    /// Finds or creates the user, then redirects to the frontend with a single-use exchange
+    /// code — never with the tokens themselves.
     /// </summary>
     [HttpGet("callback")]
     public async Task<IActionResult> Callback([FromQuery] string? returnUrl = null)
@@ -99,6 +110,7 @@ public class ExternalAuthController(
             ? stateUrl ?? returnUrl ?? $"{postLoginBase}/oauth/callback"
             : returnUrl ?? $"{postLoginBase}/oauth/callback";
 
+        // The second factor, when configured, is applied at exchange time — see Exchange().
         var signInResult = await _signInManager.ExternalLoginSignInAsync(
             info.LoginProvider,
             info.ProviderKey,
@@ -109,6 +121,8 @@ public class ExternalAuthController(
 
         if (signInResult.Succeeded)
         {
+            // Already-linked provider identity: the provider key itself is the proof, so no
+            // email verification is involved.
             user = await _userManager.FindByLoginAsync(info.LoginProvider, info.ProviderKey);
         }
         else if (signInResult.IsLockedOut)
@@ -123,6 +137,29 @@ public class ExternalAuthController(
             {
                 _logger.LogWarning("OAuth provider {Provider} did not return an email address", info.LoginProvider);
                 return Redirect($"{errorRedirectBase}?error=no_email");
+            }
+
+            // SECURITY: the email address decides which local account this provider identity
+            // gets attached to. An address the provider has not verified is an assertion by
+            // whoever controls the provider account, not by the address owner — accepting it
+            // is the classic pre-hijacking account-takeover path.
+            if (_authOptions.Value.RequireVerifiedProviderEmail)
+            {
+                var verification = await _emailVerifier.VerifyAsync(info, email, HttpContext.RequestAborted);
+
+                if (!verification.IsVerified)
+                {
+                    _logger.LogWarning(
+                        "Refused to link {Provider} identity to {Email}: provider did not verify the address ({Reason})",
+                        info.LoginProvider, email, verification.Reason);
+
+                    await _audit.LogAsync(
+                        AuditAction.OAuthLinkRejectedUnverified,
+                        succeeded: false,
+                        metadata: new { provider = info.LoginProvider, email, reason = verification.Reason });
+
+                    return Redirect($"{errorRedirectBase}?error=email_not_verified&provider={Uri.EscapeDataString(info.LoginProvider)}");
+                }
             }
 
             user = await _userManager.FindByEmailAsync(email);
@@ -146,6 +183,7 @@ public class ExternalAuthController(
                 {
                     UserName = userName,
                     Email = email,
+                    // The provider verified this address (checked above), so it is confirmed here.
                     EmailConfirmed = true,
                     ProfileImageUrl = pictureUrl,
                 };
@@ -160,6 +198,9 @@ public class ExternalAuthController(
 
                 _logger.LogInformation("Created new user {Email} via {Provider} OAuth", email, info.LoginProvider);
 
+                await _audit.LogAsync(AuditAction.OAuthAccountCreated, actorUserId: user.Id, actorEmail: email,
+                    targetUserId: user.Id, metadata: new { provider = info.LoginProvider });
+
                 try
                 {
                     await _emailService.SendWelcomeEmailAsync(email, user.UserName ?? email);
@@ -172,6 +213,9 @@ public class ExternalAuthController(
             else
             {
                 _logger.LogInformation("Linked existing account {Email} to {Provider} OAuth", email, info.LoginProvider);
+
+                await _audit.LogAsync(AuditAction.OAuthAccountLinked, actorUserId: user.Id, actorEmail: email,
+                    targetUserId: user.Id, metadata: new { provider = info.LoginProvider });
             }
 
             var addLoginResult = await _userManager.AddLoginAsync(user, info);
@@ -208,16 +252,69 @@ public class ExternalAuthController(
 
         _logger.LogInformation("User {Email} authenticated via {Provider}", user.Email, info.LoginProvider);
 
-        var tokenResponse = await _tokenService.GenerateTokensAsync(user);
-
-        // Redirect to the frontend callback page with tokens in the query string; the
-        // callback page is expected to move them into storage/cookies and strip the URL.
         var separator = redirectTarget.Contains('?') ? "&" : "?";
-        var redirectUrl = $"{redirectTarget}{separator}accessToken={Uri.EscapeDataString(tokenResponse.AccessToken)}" +
-                          $"&refreshToken={Uri.EscapeDataString(tokenResponse.RefreshToken)}" +
-                          $"&expiresIn={tokenResponse.ExpiresIn}";
 
-        return Redirect(redirectUrl);
+        // Legacy escape hatch — tokens straight in the URL. Off by default; see AuthOptions.
+        if (_authOptions.Value.AllowTokensInOAuthRedirect)
+        {
+            var tokenResponse = await _tokenService.GenerateTokensAsync(user);
+            var legacyUrl = $"{redirectTarget}{separator}accessToken={Uri.EscapeDataString(tokenResponse.AccessToken)}" +
+                            $"&refreshToken={Uri.EscapeDataString(tokenResponse.RefreshToken)}" +
+                            $"&expiresIn={tokenResponse.ExpiresIn}";
+
+            return Redirect(legacyUrl);
+        }
+
+        // A URL is not a confidential channel: it lands in browser history and its cloud
+        // sync, the Referer of anything the callback page loads, and every access log on the
+        // path. So the redirect carries a code that is single-use, expires in a minute, and
+        // is worthless without a POST from the frontend.
+        var exchangeCode = await _exchangeCodes.IssueAsync(user.Id, info.LoginProvider, HttpContext.RequestAborted);
+
+        return Redirect($"{redirectTarget}{separator}code={Uri.EscapeDataString(exchangeCode)}");
+    }
+
+    /// <summary>
+    /// Exchanges the single-use code from the OAuth callback redirect for tokens.
+    /// Returns a two-factor challenge instead when the account has 2FA enabled.
+    /// </summary>
+    [HttpPost("exchange")]
+    [EnableRateLimiting("auth")]
+    // Returns TwoFactorRequiredResponse at this same 200 for a 2FA-enabled account.
+    [ProducesResponseType(typeof(TokenResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> Exchange([FromBody] OAuthExchangeRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Code))
+            return BadRequest(new { error = "Code is required." });
+
+        var userId = await _exchangeCodes.RedeemAsync(request.Code, HttpContext.RequestAborted);
+        if (userId == null)
+            return Unauthorized(new { error = "Invalid, expired, or already-used code." });
+
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null || user.IsDeleted)
+            return Unauthorized(new { error = "Account is not available." });
+
+        if (await _userManager.IsLockedOutAsync(user))
+            return Unauthorized(new { error = "Account is temporarily locked." });
+
+        // The OAuth callback deliberately bypasses Identity's own two-factor step so that the
+        // second factor is applied here, on the API call, rather than mid-redirect.
+        if (user.TwoFactorEnabled)
+        {
+            return Ok(new TwoFactorRequiredResponse(
+                RequiresTwoFactor: true,
+                ChallengeToken: _tokenService.GenerateTwoFactorChallengeToken(user),
+                ExpiresIn: 300));
+        }
+
+        await _audit.LogAsync(AuditAction.LoginSucceeded, actorUserId: user.Id, actorEmail: user.Email,
+            targetUserId: user.Id, metadata: new { method = "oauth_exchange" });
+
+        return Ok(await _tokenService.GenerateTokensAsync(user));
     }
 
     /// <summary>
@@ -242,7 +339,7 @@ public class ExternalAuthController(
     /// Returns true only when <paramref name="returnUrl"/> belongs to one of the
     /// <paramref name="allowedBaseUrls"/> origins and one of the known OAuth callback paths.
     /// Prevents open-redirect attacks where an attacker supplies a crafted returnUrl so
-    /// that JWT tokens are forwarded to their own server after a successful OAuth flow.
+    /// that the exchange code is forwarded to their own server after a successful OAuth flow.
     /// </summary>
     private static bool IsAllowedReturnUrl(string returnUrl, string[] allowedBaseUrls)
     {
