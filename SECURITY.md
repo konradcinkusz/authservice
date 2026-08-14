@@ -75,5 +75,9 @@ Be aware of the following when evaluating this project:
   JWKS endpoint is tracked in the issue backlog.
 - **The demo deployment and `docker-compose.yml` ship deliberately weak, publicly documented
   credentials.** They are for evaluation. Do not point anything real at them.
+- **With no email provider configured, email is not sent at all.** The fallback logs that a
+  message was skipped; it writes the token itself only in Development. A deployment that never
+  sets `SendGrid:ApiKey` therefore has no working password-reset or verification flow — which
+  is why email verification stays off in that configuration rather than locking users out.
 - Security-relevant configuration is summarised in the service's startup log line, so you can
   confirm from the logs which posture a deployment actually came up in.
