@@ -176,69 +176,36 @@ dotnet ef migrations add InitialCreate \
 Full procedure, and idempotent upgrade DDL for existing deployments, in
 [`docs/schema/README.md`](docs/schema/README.md).
 
-## Deployment (Fly.io)
+## Releasing
 
-`.github/workflows/flyio.yml` builds and deploys this service to
-[Fly.io](https://fly.io) automatically whenever a `v*` tag is pushed — which is exactly
-what happens when you **publish a GitHub Release** (create a release, set the tag to
-e.g. `v1.0.0`, publish). It can also be run manually from the Actions tab
+`.github/workflows/publish-image.yml` publishes a version-pinned image to
+`ghcr.io/konradcinkusz/authservice:<tag>` automatically whenever a `v*` tag is pushed —
+which is exactly what happens when you **publish a GitHub Release** (create a release,
+set the tag to e.g. `v0.1.0`, publish). It can also be run manually from the Actions tab
 (`workflow_dispatch`).
 
-The workflow deploys two Fly apps, both idempotently created on first run:
-
-- `authservice-postgres` — a private PostgreSQL 16 instance (`flyio/postgres.fly.toml`),
-  reachable only from `authservice` over Fly's internal network.
-- `authservice` — the API itself (`flyio/authservice.fly.toml`), built from
-  `src/AuthService/Dockerfile` and pushed to `registry.fly.io/authservice`.
-
-### One-time setup
-
-1. [Create a Fly.io account](https://fly.io) and an organization (or use `personal`).
-2. Create a deploy token: `fly tokens create deploy`.
-3. In the repo, go to **Settings → Environments** and create an environment named
-   `production`.
-4. Add the secrets below under that environment.
-5. If the app names `authservice` / `authservice-postgres` are already taken on
-   Fly.io (they're global), change `APP_AUTHSERVICE` / `APP_POSTGRES` in
-   `.github/workflows/flyio.yml` and the matching `app = "..."` line in each
-   `flyio/*.fly.toml` file before your first deploy.
-
-### Required secrets (environment: `production`)
-
-| Secret | Required | Description | How to obtain |
-| --- | --- | --- | --- |
-| `FLY_API_TOKEN` | Yes | Fly.io deploy token used by the CI runner | `fly tokens create deploy` |
-| `POSTGRES_PASSWORD` | Yes | Password for the Fly Postgres app | Generate: `openssl rand -base64 24` |
-| `JWT_SECRET` | Yes | Symmetric signing key for access tokens (32+ chars) | Generate: `openssl rand -base64 32` |
-| `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | No | Enables Google login | [Google Cloud Console](https://console.cloud.google.com/apis/credentials) |
-| `OAUTH_GITHUB_CLIENT_ID` / `OAUTH_GITHUB_CLIENT_SECRET` | No | Enables GitHub login | [GitHub OAuth Apps](https://github.com/settings/developers) |
-| `SENDGRID_API_KEY` / `SENDGRID_FROM_EMAIL` / `SENDGRID_FROM_NAME` | No | Enables real email delivery (password reset, invitations); logged only if unset | [SendGrid](https://sendgrid.com) |
-| `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` | No | Seeds a `SuperAdmin` account on first startup | Your choice |
-
-Optional repo/environment **variable**: `CORS_ALLOWED_ORIGIN` — the frontend origin
-allowed to call this API in production.
-
-### Releasing a deploy
-
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
-...or use **Releases → Draft a new release** in the GitHub UI and publish it with a
-`v*` tag. Either triggers the workflow, which builds the image, deploys PostgreSQL
-(no-op if already running), then deploys `authservice` with the new image and pushes
-the configured secrets.
+**No secrets to configure.** This repo doesn't deploy itself anywhere — the only
+credential the workflow uses is the automatic `GITHUB_TOKEN`.
 
-### Using this from another project
+One-time step after your first release: the GHCR package is created **private** by
+default even though the repo is public — go to the package's own Settings on GitHub and
+set visibility to Public, or every consumer will need its own `ghcr.io` pull
+credentials.
+
+## Deploying your own instance
 
 This service is meant to be reused as-is: each consuming project runs its **own
-independent instance** — own Fly app, own Postgres, own `Jwt:SecretKey` — rather than
+independent instance** — own compute, own database, own `Jwt:SecretKey` — rather than
 sharing one central deployment across products. There's no source-level dependency to
-take on; every `v*` release also publishes a version-pinned image to
-`ghcr.io/konradcinkusz/authservice:<tag>` (alongside the `registry.fly.io` push this
-repo's own `deploy-authservice` job uses internally), so another project's Fly config
-just references that image directly:
+take on and this repo hosts no canonical instance of its own; a consuming project pulls
+a released image and runs it as part of *its own* infrastructure.
+
+Example for a project deploying to Fly.io:
 
 ```toml
 # <consuming-project>/flyio/authservice.fly.toml
@@ -246,7 +213,7 @@ app = "<yourproject>-authservice"
 primary_region = "fra"
 
 [build]
-  image = "ghcr.io/konradcinkusz/authservice:v1.0.0"   # pin a real tag, don't float :latest
+  image = "ghcr.io/konradcinkusz/authservice:v0.1.0"   # pin a real tag, don't float :latest
 
 [env]
   ASPNETCORE_ENVIRONMENT = "Production"
@@ -254,20 +221,31 @@ primary_region = "fra"
   DatabaseProvider = "PostgreSQL"
   Jwt__Issuer = "<YourProject>"
   Jwt__Audience = "<YourProject>"
+  # Fly sets this header itself and strips any client-supplied copy, so unlike
+  # X-Forwarded-For it is a trustworthy partition key for per-IP rate limiting.
+  Network__ClientIpHeader = "Fly-Client-IP"
+
+# Point platform health checks at readiness, not liveness: /health answers 200 the
+# moment Kestrel binds, which would route live traffic at a machine whose schema is
+# still being created — or whose initialization failed outright.
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "60s"
+  method = "GET"
+  path = "/health/ready"
 ```
 
-Deploy it the same way this repo deploys its own instance — `flyctl deploy --config
-flyio/authservice.fly.toml --app <yourproject>-authservice --image
-ghcr.io/konradcinkusz/authservice:v1.0.0`, with `ConnectionStrings__DefaultConnection`
-and `Jwt__SecretKey` set as Fly secrets pointing at *that project's own* Postgres app
-and *that project's own*, independently generated signing key. Never reuse a signing
-key or database across two projects' instances — each is meant to be a fully
-independent trust root, not a shared identity provider.
+Deploy it with `flyctl deploy --config flyio/authservice.fly.toml --app
+<yourproject>-authservice --image ghcr.io/konradcinkusz/authservice:v0.1.0`, with
+`ConnectionStrings__DefaultConnection` and `Jwt__SecretKey` set as Fly secrets pointing
+at *that project's own* database and *that project's own*, independently generated
+signing key. Never reuse a signing key or database across two projects' instances — each
+is meant to be a fully independent trust root, not a shared identity provider.
 
-One-time step after this repo's first GHCR-publishing release: the package is created
-private by default even though the repo is public — go to the package's own Settings
-on GitHub and set visibility to Public, or every consumer will need its own
-`ghcr.io` pull credentials.
+Not deploying to Fly? The same image runs anywhere that runs containers — plain `docker
+run`, Azure Container Apps, Kubernetes, whatever the consuming project already uses.
+Only the image reference and how you set the two secrets above change.
 
 ## API overview
 
