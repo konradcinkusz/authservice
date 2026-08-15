@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>authservice — standalone auth for ASP.NET Core</title>
 <meta name="description" content="A standalone JWT authentication and authorization microservice for ASP.NET Core. User accounts, OAuth social login, multi-tenant organizations, and an admin API — deploy your own instance per project.">
+<link rel="icon" href="assets/logo-mark.svg" type="image/svg+xml">
 <style>
   :root {
     --bg: #ffffff;
@@ -44,6 +45,7 @@
   .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
 
   header.hero { padding: 88px 0 56px; border-bottom: 1px solid var(--border); }
+  .logo { display: block; width: 246px; max-width: 100%; height: auto; margin-bottom: 26px; }
   .eyebrow {
     display: inline-flex; align-items: center; gap: 8px;
     font-size: 13px; font-weight: 600; letter-spacing: .02em;
@@ -137,6 +139,10 @@
 
 <div class="wrap">
   <header class="hero">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+      <img class="logo" src="assets/logo.svg" alt="authservice" width="246" height="72">
+    </picture>
     <div class="eyebrow"><span class="dot"></span>Open source · MIT</div>
     <h1>Auth, handled. Once.</h1>
     <p class="lede">
