@@ -1,4 +1,26 @@
+<a name="readme-top"></a>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img src="docs/assets/logo.svg" alt="authservice — JWT auth for ASP.NET Core" width="360">
+  </picture>
+</p>
+
 # authservice
+
+[![Ask me anything](https://flat.badgen.net/static/Ask%20me/anything?icon=github&color=black&scale=1.01)](https://github.com/konradcinkusz "Ask me anything")
+[![GitHub license](https://flat.badgen.net/github/license/konradcinkusz/authservice?icon=github&color=black&scale=1.01)](https://github.com/konradcinkusz/authservice/blob/main/LICENSE "GitHub license")
+[![Maintained](https://flat.badgen.net/static/Maintained/yes?icon=github&color=black&scale=1.01)](https://github.com/konradcinkusz/authservice/commits/main "Maintained")
+[![GitHub branches](https://flat.badgen.net/github/branches/konradcinkusz/authservice?icon=github&color=black&scale=1.01)](https://github.com/konradcinkusz/authservice/branches "GitHub branches")
+[![GitHub commits](https://flat.badgen.net/github/commits/konradcinkusz/authservice?icon=github&color=black&scale=1.01)](https://github.com/konradcinkusz/authservice/commits/main "GitHub commits")
+[![GitHub issues](https://flat.badgen.net/github/issues/konradcinkusz/authservice?icon=github&color=black&scale=1.01)](https://github.com/konradcinkusz/authservice/issues "GitHub issues")
+[![GitHub pull requests](https://flat.badgen.net/github/prs/konradcinkusz/authservice?icon=github&color=black&scale=1.01)](https://github.com/konradcinkusz/authservice/pulls "GitHub pull requests")
+[![GitHub release](https://flat.badgen.net/github/release/konradcinkusz/authservice?icon=github&color=black&scale=1.01)](https://github.com/konradcinkusz/authservice/releases "GitHub release")
+
+[![CI](https://github.com/konradcinkusz/authservice/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/konradcinkusz/authservice/actions/workflows/ci.yml "CI")
+[![CodeQL](https://github.com/konradcinkusz/authservice/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/konradcinkusz/authservice/actions/workflows/codeql.yml "CodeQL")
+[![Secret scan](https://github.com/konradcinkusz/authservice/actions/workflows/secret-scan.yml/badge.svg?branch=main)](https://github.com/konradcinkusz/authservice/actions/workflows/secret-scan.yml "Secret scan")
 
 A standalone authentication and authorization service for ASP.NET Core: user identity,
 JWT access/refresh tokens, social login (Google/GitHub), and multi-tenant organizations
@@ -36,11 +58,15 @@ detailed rationale and what was kept vs. dropped.
 - **Rate limiting** (with a configurable proxy trust boundary), CORS, and Swagger/OpenAPI
   with JWT bearer auth built in.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## What's intentionally *not* here
 
 This is an auth service, not an application backend. It does not include billing,
 subscription tiers, usage quotas, or any product-specific data (notes, messages, etc.).
 Build those as separate services that trust JWTs issued here.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Quick start (Docker Compose)
 
@@ -56,6 +82,8 @@ create an organization, invite/accept a member, and query the admin API), or ope
 http://localhost:8080/swagger to explore interactively. The secrets baked into
 `docker-compose.yml` are for local experimentation only — replace them for anything
 beyond your own machine.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Getting started
 
@@ -222,6 +250,8 @@ dotnet ef migrations add InitialCreate \
 Full procedure, and idempotent upgrade DDL for existing deployments, in
 [`docs/schema/README.md`](docs/schema/README.md).
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## Releasing
 
 `.github/workflows/publish-image.yml` publishes a version-pinned image to
@@ -242,6 +272,8 @@ One-time step after your first release: the GHCR package is created **private** 
 default even though the repo is public — go to the package's own Settings on GitHub and
 set visibility to Public, or every consumer will need its own `ghcr.io` pull
 credentials.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Deploying your own instance
 
@@ -292,6 +324,8 @@ is meant to be a fully independent trust root, not a shared identity provider.
 Not deploying to Fly? The same image runs anywhere that runs containers — plain `docker
 run`, Azure Container Apps, Kubernetes, whatever the consuming project already uses.
 Only the image reference and how you set the two secrets above change.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## API overview
 
@@ -347,6 +381,8 @@ thereby also gains the ability to mint tokens for any user with any role, includ
 the decision to move to RS256 are recorded in
 [`docs/decisions/0002-token-signing-algorithm.md`](docs/decisions/0002-token-signing-algorithm.md).
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## Testing
 
 ```bash
@@ -355,6 +391,8 @@ dotnet test
 
 The suite boots the real application against in-memory SQLite via `WebApplicationFactory` —
 no Docker and no network required.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Contributing and security
 
@@ -365,6 +403,27 @@ no Docker and no network required.
   fixes chosen and the alternatives rejected.
 - [`docs/decisions/`](docs/decisions) — architecture decision records.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Follow
+
+[![GitHub followers](https://img.shields.io/github/followers/konradcinkusz?style=social)](https://github.com/konradcinkusz "GitHub followers")
+[![GitHub stars](https://img.shields.io/github/stars/konradcinkusz/authservice?style=social)](https://github.com/konradcinkusz/authservice/stargazers "GitHub stars")
+
+## Star history
+
+<a href="https://star-history.com/#konradcinkusz/authservice&Timeline">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=konradcinkusz/authservice&type=Timeline&theme=dark" />
+  <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=konradcinkusz/authservice&type=Timeline" />
+  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=konradcinkusz/authservice&type=Timeline" />
+</picture>
+</a>
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
