@@ -41,11 +41,13 @@ restart would silently invalidate every token.
 **B — RS256 with a published JWKS.**
 
 The previous revision of this ADR deferred B behind a deliberately concrete trigger: *"the
-first time a service that is not AuthService needs to validate a token."* That has now
-happened. [cv-maker](https://github.com/konradcinkusz/cv-maker) validates tokens minted here,
-which is the moment "can verify" and "can forge" stop being the same trust level in practice.
-Under HS256, cv-maker's API — a CV renderer — would hold the ability to mint `SuperAdmin`
-tokens for this identity system.
+first time a service that is not AuthService needs to validate a token."* **That trigger has
+now fired** — a downstream service validates tokens minted here.
+
+That is the moment "can verify" and "can forge" stop being the same trust level in practice.
+Under HS256 the second service, whatever it does, holds the ability to mint `SuperAdmin`
+tokens for this identity system — and the blast radius grows with every service added after
+it.
 
 The independent constraint is that
 [`architecture-standards`](https://github.com/konradcinkusz/architecture-standards) does not
@@ -88,8 +90,8 @@ the test suite, where the service is the sole validator. Both paths are exercise
 - **The symmetric key is never published.** Under HS256 the JWKS is an empty key set rather
   than a 404 — a consumer gets "no keys I can use" instead of "no JWKS here" — and a test
   asserts the secret does not appear in the document.
-- **Consumers need no shared secret.** cv-maker's API sets `MetadataAddress` at this service's
-  discovery document and holds no key at all.
+- **Consumers need no shared secret.** A downstream service points `MetadataAddress` at this
+  service's discovery document and holds no key material at all.
 - **Key material is now an operational concern**, as predicted. It is a PEM in a platform
   secret (`fly secrets set Jwt__PrivateKeyPem=...`), which the escaped-newline handling in
   `JwtSigningKeys` exists to make survivable.

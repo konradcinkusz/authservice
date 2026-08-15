@@ -121,8 +121,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 Set `Jwt__Issuer` and `Jwt__Audience` to something product-specific rather than leaving the
 `AuthService` default. Two products both on the defaults would accept each other's tokens.
 
-## Worked example
+## A note on shape
 
-[cv-maker](https://github.com/konradcinkusz/cv-maker) deploys this image alongside its own
-apps: `flyio/authservice.fly.toml` for the app, and one Postgres app hosting a database for
-each service.
+The deployment above assumes the consuming project owns the topology: it declares the app,
+holds the secrets, and runs the database. A common arrangement is one Postgres app with a
+database per service, with this one reached over the platform's private network — but that is
+the consumer's decision to make, not this repository's to prescribe.
