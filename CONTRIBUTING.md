@@ -18,7 +18,7 @@ If you are unsure, open an issue before writing the code. That is cheaper for bo
 
 ## Getting set up
 
-Requires the .NET 9 SDK, plus Docker if you want a real database.
+Requires the .NET 10 SDK, plus Docker if you want a real database.
 
 ```bash
 git clone https://github.com/konradcinkusz/authservice.git

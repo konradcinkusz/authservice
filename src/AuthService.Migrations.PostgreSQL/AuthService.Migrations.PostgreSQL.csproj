@@ -8,19 +8,23 @@
     Keeping each provider's set in its own assembly is the standard answer, and is what
     Database:MigrationsAssembly selects between at runtime.
 
-    The EF Core provider packages arrive transitively from the service project; nothing is
+    This references AuthService.Data rather than AuthService, so that AuthService can
+    reference it back without a cycle — which is what `dotnet ef` requires to load a
+    migrations assembly at all.
+
+    The EF Core provider packages arrive transitively from AuthService.Data; nothing is
     referenced here that is not already referenced there.
   -->
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AuthService.Migrations.PostgreSQL</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AuthService\AuthService.csproj" />
+    <ProjectReference Include="..\AuthService.Data\AuthService.Data.csproj" />
   </ItemGroup>
 
 </Project>

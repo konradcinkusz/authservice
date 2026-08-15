@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The model, the DbContext, and the provider wiring — everything `dotnet ef` needs and
+    nothing else.
+
+    This exists to break a reference cycle. `dotnet ef` loads the migrations assembly out of
+    the *startup* project's output directory, so AuthService has to reference
+    AuthService.Migrations.*; those projects in turn need the ApplicationDbContext type their
+    [DbContext(...)] attributes name. While the context lived in AuthService that was a cycle
+    and no combination of flags resolved it — which is why no migration set could be generated
+    (issue #17).
+
+    With the context here, the graph is acyclic:
+
+      AuthService.Data  ←  AuthService.Migrations.PostgreSQL  ←┐
+                        ←  AuthService.Migrations.SqlServer   ←┤
+                        ←──────────────────────────────────── AuthService
+
+    Namespaces are deliberately unchanged (AuthService.Data, AuthService.Models,
+    AuthService.Extensions), so moving the files changed no `using` anywhere.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AuthService</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- DesignTimeDbContextFactory builds its own configuration; outside the Web SDK these
+         two providers are not implicit. (IDesignTimeDbContextFactory itself lives in
+         Microsoft.EntityFrameworkCore, so the Design package belongs in the startup project
+         where `dotnet ef` looks for it, not here.) -->
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.11" />
+  </ItemGroup>
+
+</Project>

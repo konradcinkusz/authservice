@@ -61,7 +61,7 @@ beyond your own machine.
 
 ### Prerequisites
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - PostgreSQL (default) or SQL Server
 - Docker + Docker Compose (only needed for the quick start above)
 
@@ -202,7 +202,14 @@ schema. The service logs a warning on every startup where this happens.
 
 Migrations are not committed, because one migration set cannot serve both PostgreSQL and SQL
 Server — the generated DDL and the filtered-index expressions differ. Generate a set per
-provider; a design-time factory is included so no database is needed:
+provider; the projects are already wired up and a design-time factory is included, so no
+database is needed:
+
+```bash
+scripts/generate-migrations.sh InitialCreate
+```
+
+or, one provider at a time:
 
 ```bash
 DATABASE_PROVIDER=PostgreSQL \

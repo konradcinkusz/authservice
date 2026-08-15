@@ -29,20 +29,15 @@ locally, which is what the wiring below supports.
 
 ## Generating migrations
 
-Create a migrations project per provider, referencing the service project:
+Both migration projects already exist and are wired up. Generate a set into each with:
 
 ```bash
-dotnet new classlib -o src/AuthService.Migrations.PostgreSQL
-dotnet add src/AuthService.Migrations.PostgreSQL reference src/AuthService/AuthService.csproj
-dotnet sln add src/AuthService.Migrations.PostgreSQL
-
-dotnet new classlib -o src/AuthService.Migrations.SqlServer
-dotnet add src/AuthService.Migrations.SqlServer reference src/AuthService/AuthService.csproj
-dotnet sln add src/AuthService.Migrations.SqlServer
+scripts/generate-migrations.sh InitialCreate
 ```
 
-Generate the initial migration for each. `DesignTimeDbContextFactory` reads the same
-`DATABASE_PROVIDER` the runtime does and needs no reachable database:
+That runs, for each provider, what you would otherwise type by hand.
+`DesignTimeDbContextFactory` reads the same `DATABASE_PROVIDER` the runtime does and needs no
+reachable database, so nothing has to be running:
 
 ```bash
 DATABASE_PROVIDER=PostgreSQL \
@@ -58,29 +53,29 @@ dotnet ef migrations add InitialCreate \
   --startup-project src/AuthService
 ```
 
-### The reference cycle you will hit first
+Review the generated DDL and commit it. CI's `Migrations` job turns from a no-op into a real
+guard — `has-pending-model-changes` — as soon as a set is present.
 
-`dotnet ef migrations add --project src/AuthService.Migrations.PostgreSQL --startup-project
-src/AuthService` fails with:
+### The project layout, and the cycle it exists to avoid
+
+`dotnet ef` loads the migrations assembly out of the **startup project's** output directory,
+so `AuthService` has to reference `AuthService.Migrations.*`. Those projects in turn need the
+`ApplicationDbContext` type their `[DbContext(...)]` attributes name. While the context lived
+in `AuthService` that was a cycle, and no combination of flags resolved it — every attempt
+failed with `File '.../AuthService.Migrations.PostgreSQL.dll' not found.`
+
+`src/AuthService.Data/` is the fix. It holds the entity types, `ApplicationDbContext`,
+`DesignTimeDbContextFactory` and the provider wiring, and depends on nothing else in the
+repository:
 
 ```
-File '.../src/AuthService/bin/Debug/net9.0/AuthService.Migrations.PostgreSQL.dll' not found.
+AuthService.Data  ←  AuthService.Migrations.PostgreSQL  ←┐
+                  ←  AuthService.Migrations.SqlServer   ←┤
+                  ←──────────────────────────────────── AuthService
 ```
 
-This is not a mistake in the command. `dotnet ef` loads the migrations assembly out of the
-**startup project's** output directory, so `AuthService` has to reference
-`AuthService.Migrations.PostgreSQL` — and that project already references `AuthService`, for
-the `ApplicationDbContext` type its `[DbContext(...)]` attributes name. That is a cycle, and
-no combination of flags resolves it.
-
-The standard fix is structural: move `ApplicationDbContext` and the entity types into a
-class library that the application and both migration projects reference. The application
-then references the migration assemblies without a cycle. That is a real refactor and is
-deliberately not done here — it touches every `using` in the service, and `EnsureCreated`
-remains correct for a first deploy against an empty database in the meantime.
-
-Until it happens, the two migration projects exist as the destination, and CI's migration
-check is a no-op that turns into a real guard the moment a set is committed.
+Namespaces did not change with the move (`AuthService.Data`, `AuthService.Models`,
+`AuthService.Extensions`), so no `using` anywhere in the service or the tests was affected.
 
 Then run with:
 
