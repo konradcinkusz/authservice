@@ -16,7 +16,7 @@ copy and paste.
 ## 0. What is authservice
 
 `authservice` is a standalone authentication and authorization microservice for
-ASP.NET Core (.NET 9) that provides:
+ASP.NET Core (.NET 10) that provides:
 
 - user accounts (registration, login, password reset/change, soft-delete),
 - JWT tokens (short-lived access token + long-lived, revocable refresh token),
@@ -72,7 +72,7 @@ Interactive API documentation (Swagger) is available at `http://localhost:8080/s
 
 ### 1.2. Running locally without Docker (`dotnet run`)
 
-Requirements: .NET 9 SDK and a running PostgreSQL (or SQL Server) instance.
+Requirements: .NET 10 SDK and a running PostgreSQL (or SQL Server) instance.
 
 ```bash
 cd src/AuthService

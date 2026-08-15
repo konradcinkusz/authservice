@@ -55,7 +55,10 @@ jobs:
         with:
           context: .
           file: src/AuthService/Dockerfile
-          platforms: linux/amd64
+          # arm64 as well as amd64 so the image runs natively on Apple Silicon and on arm
+          # instances without emulation. The Dockerfile cross-compiles rather than building
+          # under QEMU, so the second platform costs little.
+          platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
           tags: |

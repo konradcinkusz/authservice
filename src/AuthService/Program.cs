@@ -252,7 +252,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     {
         // Opt-in only. Safe exclusively when the app cannot be reached except through a
         // trusted proxy, because anything that reaches it directly can now forge its IP.
-        options.KnownNetworks.Clear();
+        options.KnownIPNetworks.Clear();
         options.KnownProxies.Clear();
         options.ForwardLimit = null;
         return;
@@ -273,7 +273,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
             IPAddress.TryParse(parts[0], out var prefix) &&
             int.TryParse(parts[1], out var prefixLength))
         {
-            options.KnownNetworks.Add(new(prefix, prefixLength));
+            // System.Net.IPNetwork — unlike the HttpOverrides type it replaced — insists the
+            // base address is the network address, so "10.0.0.5/8" throws where it used to be
+            // quietly accepted. Skipped like any other malformed entry rather than taken down
+            // the process at startup.
+            // Qualified because Microsoft.AspNetCore.HttpOverrides is also in scope and still
+            // exports a type of the same name.
+            if (System.Net.IPNetwork.TryParse($"{prefix}/{prefixLength}", out var parsed))
+                options.KnownIPNetworks.Add(parsed);
         }
     }
 });

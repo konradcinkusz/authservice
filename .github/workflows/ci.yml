@@ -19,7 +19,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Restore
         run: dotnet restore AuthService.sln
@@ -47,7 +47,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "10.0.x"
 
       # The codebase is consistently formatted today and nothing enforced it, so the first
       # outside contribution was where drift would start.
@@ -63,7 +63,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Install dotnet-ef
         run: |
@@ -80,12 +80,10 @@ jobs:
       # matching migration is invisible under EnsureCreated and fails at runtime under
       # Migrate, which is the failure mode issue #17 is about.
       #
-      # It is a no-op until a set is committed, deliberately. Generating one needs the
-      # startup project to reference the migrations assembly so `dotnet ef` can load it, and
-      # the migrations assembly already references the startup project for the DbContext
-      # type — a cycle that cannot be broken while ApplicationDbContext lives in the
-      # application project. See docs/schema/README.md; the fix is a structural change, not
-      # a CI flag, and pretending otherwise here would just leave a job that always fails.
+      # The reference cycle that used to make generating a set impossible is gone —
+      # ApplicationDbContext now lives in AuthService.Data, which the migration assemblies
+      # reference and AuthService references back. `scripts/generate-migrations.sh` works.
+      # This stays a no-op only until someone runs it and commits the result.
       - name: Migrations match the model
         run: |
           set -euo pipefail
