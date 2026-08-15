@@ -49,13 +49,10 @@ Under HS256 the second service, whatever it does, holds the ability to mint `Sup
 tokens for this identity system — and the blast radius grows with every service added after
 it.
 
-The independent constraint is that
-[`architecture-standards`](https://github.com/konradcinkusz/architecture-standards) does not
-treat this as optional. Its reference architecture lists token signing as **"Asymmetric +
-JWKS — P5; required, not aspirational"**, and its compliance checklist reads *"exactly one
-service holds a signing key; all others validate against its JWKS endpoint."* Shipping the
-two-service topology on HS256 would have been a knowing deviation from the standard this
-project is measured against.
+There is also nothing novel being chosen here. Exactly one service holding a signing key,
+with every other service verifying against its published JWKS, is what identity providers do
+and what the JWT and JWKS specifications exist to support. Continuing to hand a shared secret
+to a second validator would have been the unusual decision, not this one.
 
 ### What was built
 
