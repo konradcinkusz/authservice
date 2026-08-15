@@ -22,6 +22,8 @@
 [![CodeQL](https://github.com/konradcinkusz/authservice/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/konradcinkusz/authservice/actions/workflows/codeql.yml "CodeQL")
 [![Secret scan](https://github.com/konradcinkusz/authservice/actions/workflows/secret-scan.yml/badge.svg?branch=main)](https://github.com/konradcinkusz/authservice/actions/workflows/secret-scan.yml "Secret scan")
 
+[![GitHub Pages](https://img.shields.io/badge/GitHub_Pages-181717?style=for-the-badge&logo=github&logoColor=white)](https://konradcinkusz.github.io/authservice/ "The project one-pager, deployed from .github/workflows/pages.yml")
+
 A standalone authentication and authorization service for ASP.NET Core: user identity,
 JWT access/refresh tokens, social login (Google/GitHub), and multi-tenant organizations
 with role-based membership. Bring it up as its own microservice and point any frontend
@@ -32,6 +34,10 @@ product. Everything specific to that product — billing/subscriptions, usage qu
 in-app announcements, and other product features — was intentionally left behind so this
 repository stays generically useful. See [`EXTRACTION.md`](EXTRACTION.md) for the
 detailed rationale and what was kept vs. dropped.
+
+A one-page overview of the project is published at
+<https://konradcinkusz.github.io/authservice/>, built from [`docs/`](docs) by
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml).
 
 ## Features
 
