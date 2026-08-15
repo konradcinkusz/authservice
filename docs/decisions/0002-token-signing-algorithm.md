@@ -1,7 +1,7 @@
-# ADR 0002 — Token signing: HS256 today, RS256 when there is a second consumer
+# ADR 0002 — Token signing: RS256 with a published JWKS
 
-**Status:** Proposed — **not implemented** (tracks issue #29)
-**Date:** 2026-08-14
+**Status:** Accepted — **implemented** (closes issue #29)
+**Date:** 2026-08-14 (superseded the deferral on the same date, when the trigger fired)
 
 ## Context
 
@@ -38,26 +38,61 @@ restart would silently invalidate every token.
 
 ## Decision
 
-**Stay on HS256 for now; move to B before the second independent consumer exists.**
+**B — RS256 with a published JWKS.**
 
-The trigger is concrete rather than aspirational: the first time a service that is not
-AuthService needs to validate a token, HS256 stops being adequate, because that is the moment
-"can verify" and "can forge" stop being the same trust level in practice.
+The previous revision of this ADR deferred B behind a deliberately concrete trigger: *"the
+first time a service that is not AuthService needs to validate a token."* **That trigger has
+now fired** — a downstream service validates tokens minted here.
 
-This change set deliberately does **not** implement RS256. It does reduce the surrounding
-risk:
+That is the moment "can verify" and "can forge" stop being the same trust level in practice.
+Under HS256 the second service, whatever it does, holds the ability to mint `SuperAdmin`
+tokens for this identity system — and the blast radius grows with every service added after
+it.
 
-- The key is now validated at startup for length (≥ 256 bits), instead of failing from inside
-  the signing call at the first successful login.
-- Two-factor challenge tokens use a separate audience, so the signing key's authority is at
-  least partitioned by purpose.
-- `SECURITY.md` states the symmetric-key posture plainly rather than leaving evaluators to
-  infer it.
+There is also nothing novel being chosen here. Exactly one service holding a signing key,
+with every other service verifying against its published JWKS, is what identity providers do
+and what the JWT and JWKS specifications exist to support. Continuing to hand a shared secret
+to a second validator would have been the unusual decision, not this one.
+
+### What was built
+
+- `JwtSigningKeys` resolves key material once, at startup, and validates it there — a bad key
+  is a startup failure naming the setting, not a first-login exception.
+- `Jwt:Algorithm` selects `HS256` or `RS256`. Unset, it is **inferred**: configuring a private
+  key selects RS256. That asymmetry is deliberate — the dangerous mistake is supplying a
+  keypair and silently continuing to sign symmetrically, so that combination cannot occur.
+- `GET /.well-known/jwks.json` publishes the public half, with a `kid` derived from the key
+  itself (RFC 7638 thumbprint) rather than configured. A rotated key therefore cannot reuse
+  its predecessor's id, which is precisely when an ambiguous key set would do most damage.
+- `GET /.well-known/openid-configuration` publishes just enough metadata for a consumer to set
+  `JwtBearerOptions.Authority` and nothing else. It advertises no `response_types`: this is key
+  discovery, not a claim to be an OIDC provider (ADR 0003).
+- Rotation is a rolling change, not a flag day. `Jwt:PreviousPublicKeyPem` keeps a retired key
+  in the validation set and in the JWKS while tokens signed with it are still alive; only the
+  current key ever signs.
+
+### On option C
+
+The earlier revision rejected "support both" on the grounds that the hard part is key material,
+not code. That reasoning stands, and the shipped design respects it: there is no mode that
+generates an ephemeral keypair at startup, because a restart would silently invalidate every
+outstanding token. HS256 survives only as the zero-ceremony path for `docker compose up` and
+the test suite, where the service is the sole validator. Both paths are exercised by tests.
 
 ## Consequences
 
-- The README must say, without hedging, that any service given `Jwt:SecretKey` can mint tokens
-  for any user — so only give it to services you would trust to do that.
-- When B lands it is a breaking change for every downstream validator, and wants the `/api/v2`
-  slot or a flag day.
-- Until then, rotating the secret is a coordinated outage. That is the cost being accepted.
+- **HS256 remains the default when no private key is configured.** The quick start does not
+  change, and neither does the test suite. What changes is that a deployment with a second
+  consumer is expected to configure a keypair, and logs a warning at startup if it has not.
+- **The symmetric key is never published.** Under HS256 the JWKS is an empty key set rather
+  than a 404 — a consumer gets "no keys I can use" instead of "no JWKS here" — and a test
+  asserts the secret does not appear in the document.
+- **Consumers need no shared secret.** A downstream service points `MetadataAddress` at this
+  service's discovery document and holds no key material at all.
+- **Key material is now an operational concern**, as predicted. It is a PEM in a platform
+  secret (`fly secrets set Jwt__PrivateKeyPem=...`), which the escaped-newline handling in
+  `JwtSigningKeys` exists to make survivable.
+- **`iss` is still the bare string `AuthService`, not a URL.** The discovery document reports
+  that value rather than the service's own origin, so a consumer validating `iss` against
+  discovery gets a match. Changing it to a URL would be a breaking change for every issued
+  token and is not worth doing on its own.

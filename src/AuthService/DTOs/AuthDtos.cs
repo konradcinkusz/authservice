@@ -250,6 +250,19 @@ public record DeleteAccountRequest(
 // ─── Legal / Consent DTOs ───────────────────────────────────────────────────
 
 /// <summary>
+/// The consent document versions a registration must accept. Public: these are identifiers of
+/// published legal documents, and a sign-up form needs them before it has a token.
+/// </summary>
+public record ConsentVersionsResponse(
+    /// <summary>Current Terms of Use version</summary>
+    string Terms,
+    /// <summary>Current Privacy Policy version</summary>
+    string Privacy,
+    /// <summary>Current Cookie Policy version</summary>
+    string Cookies
+);
+
+/// <summary>
 /// Versions of legal documents currently required plus the latest version the
 /// user has accepted for each type.
 /// </summary>

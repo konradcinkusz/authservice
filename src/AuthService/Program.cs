@@ -107,28 +107,19 @@ if (string.IsNullOrWhiteSpace(connectionString))
         "ConnectionStrings__DefaultConnection environment variable, appsettings.json, or dotnet user-secrets.");
 }
 
-var jwtSecretKey = builder.Configuration["Jwt:SecretKey"];
-if (string.IsNullOrWhiteSpace(jwtSecretKey))
-{
-    throw new InvalidOperationException(
-        "Jwt:SecretKey is not configured. Set it via the Jwt__SecretKey environment variable, " +
-        "appsettings.json, or dotnet user-secrets.");
-}
-
-// HMAC-SHA256 needs at least a 256-bit key. Without this check a short key throws from
-// inside the signing call at first login rather than at startup.
-const int MinimumJwtKeyBytes = 32;
-var jwtKeyBytes = Encoding.UTF8.GetByteCount(jwtSecretKey);
-if (jwtKeyBytes < MinimumJwtKeyBytes)
-{
-    throw new InvalidOperationException(
-        $"Jwt:SecretKey must be at least {MinimumJwtKeyBytes} bytes ({MinimumJwtKeyBytes} ASCII characters) " +
-        $"for HMAC-SHA256; the configured value is {jwtKeyBytes} bytes. " +
-        "Generate one with: openssl rand -base64 48");
-}
+// Key material is resolved — and validated — here rather than at first login, so a bad key is
+// a startup failure with a message naming the setting. Constructing it eagerly also means the
+// singleton registered below never throws from inside a request.
+var signingKeys = new JwtSigningKeys(builder.Configuration);
+builder.Services.AddSingleton(signingKeys);
 
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "AuthService";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "AuthService";
+
+// Public origin of this service, used to build the `jwks_uri` in the discovery document.
+// Optional: without it the request's own scheme/host is used, which is correct as long as
+// forwarded headers are trusted (they are, via UseForwardedHeaders below).
+var jwtPublicBaseUrl = builder.Configuration["Jwt:PublicBaseUrl"];
 
 // Database — supports PostgreSQL (default) or SQL Server via DatabaseProvider / DATABASE_PROVIDER.
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
@@ -180,7 +171,8 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
 .AddDefaultTokenProviders();
 
 // JWT Authentication
-// SECURITY: These values MUST be set via environment variables in production (Jwt__SecretKey, Jwt__Issuer, Jwt__Audience)
+// SECURITY: These values MUST be set via environment variables in production
+// (Jwt__PrivateKeyPem or Jwt__SecretKey, Jwt__Issuer, Jwt__Audience)
 var authBuilder = builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -200,7 +192,9 @@ var authBuilder = builder.Services.AddAuthentication(options =>
         // Two-factor challenge tokens are issued for "<audience>:2fa" and are therefore
         // rejected here — they can complete a 2FA login and nothing else.
         ValidAudience = jwtAudience,
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecretKey)),
+        // The whole set, not just the signing key: a token minted before a key rotation stays
+        // valid until it expires (see JwtSigningKeys).
+        IssuerSigningKeys = signingKeys.ValidationKeys,
         ClockSkew = TimeSpan.Zero
     };
 });
@@ -383,10 +377,20 @@ var app = builder.Build();
 // Startup summary of the security-relevant choices, so an operator can see from the logs
 // which posture the service actually came up in rather than inferring it.
 app.Logger.LogInformation(
-    "AuthService starting. Provider={Provider}, SchemaMode={SchemaMode}, RequireConfirmedEmail={RequireConfirmedEmail}, " +
-    "EmailDelivery={EmailDelivery}, TrustAllProxies={TrustAllProxies}, ClientIpHeader={ClientIpHeader}",
-    dbProvider, schemaMode, requireConfirmedEmail, canSendEmail ? "SendGrid" : "disabled (no-op)",
+    "AuthService starting. Provider={Provider}, SchemaMode={SchemaMode}, SigningAlgorithm={SigningAlgorithm}, " +
+    "RequireConfirmedEmail={RequireConfirmedEmail}, EmailDelivery={EmailDelivery}, " +
+    "TrustAllProxies={TrustAllProxies}, ClientIpHeader={ClientIpHeader}",
+    dbProvider, schemaMode, signingKeys.Algorithm, requireConfirmedEmail,
+    canSendEmail ? "SendGrid" : "disabled (no-op)",
     networkOptions.TrustAllProxies, networkOptions.ClientIpHeader ?? "(none)");
+
+if (!signingKeys.SupportsPublicVerification)
+{
+    app.Logger.LogWarning(
+        "Tokens are signed with HS256. Any service given Jwt:SecretKey to validate tokens can " +
+        "also mint them, for any user and any role. Set Jwt__Algorithm=RS256 with " +
+        "Jwt__PrivateKeyPem before a second service validates these tokens (ADR 0002).");
+}
 
 if (authOptions.AllowTokensInOAuthRedirect)
 {
@@ -444,11 +448,56 @@ app.UseAuthorization();
 
 app.MapControllers();
 
+// ─── Public key distribution ───────────────────────────────────────────────────
+// The point of asymmetric signing: consumers verify against this and cannot issue. Anonymous
+// by design — a public key is public — and cacheable, since the key only changes on rotation
+// and the `kid` header is what actually selects between them.
+//
+// Under HS256 this serves an empty key set rather than 404, so a consumer configured for JWKS
+// gets "no keys I can use" instead of "this service does not do JWKS at all". The symmetric
+// key is never published here; that would hand out the ability to mint tokens.
+app.MapGet("/.well-known/jwks.json", (JwtSigningKeys keys, HttpContext http) =>
+{
+    http.Response.Headers.CacheControl = "public, max-age=300";
+    return Results.Json(keys.BuildJwks());
+}).AllowAnonymous();
+
+// Enough OIDC metadata for ASP.NET Core's JwtBearerOptions.Authority to discover the JWKS on
+// its own. This is deliberately not a claim to be an OIDC provider — there is no authorization
+// endpoint and no token endpoint here (ADR 0003). It exists so a consumer can write
+// `options.Authority = "https://auth.example.com"` and nothing else.
+app.MapGet("/.well-known/openid-configuration", (HttpContext http) =>
+{
+    // `issuer` is the value tokens actually carry in `iss` — not this service's URL. They are
+    // allowed to differ (the default issuer is the bare string "AuthService"), and reporting the
+    // URL here would hand consumers an issuer that never matches a token they receive.
+    //
+    // `jwks_uri` must be reachable by the consumer, so it is built from the configured public
+    // base URL where one is set, and from the request otherwise. Behind Fly's proxy the request
+    // host is correct only because UseForwardedHeaders ran first.
+    var baseUrl = (jwtPublicBaseUrl ?? $"{http.Request.Scheme}://{http.Request.Host}").TrimEnd('/');
+
+    http.Response.Headers.CacheControl = "public, max-age=300";
+    return Results.Json(new
+    {
+        issuer = jwtIssuer,
+        jwks_uri = $"{baseUrl}/.well-known/jwks.json",
+        id_token_signing_alg_values_supported = new[] { signingKeys.Algorithm.ToString() },
+        response_types_supported = Array.Empty<string>(),
+        subject_types_supported = new[] { "public" }
+    });
+}).AllowAnonymous();
+
 // Liveness: the process is up and serving. Restart-on-failure hangs off this.
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy", service = "AuthService" }));
 
+// The same answer under the name the architecture standard's checklist uses, so a
+// platform configured from that checklist finds it. Kept as an alias rather than a
+// rename: /health is what every existing deployment and the README already point at.
+app.MapGet("/alive", () => Results.Ok(new { status = "Healthy", service = "AuthService" }));
+
 // Readiness: the process can actually serve a request. Load balancers and platform
-// health checks belong here — see flyio/authservice.fly.toml.
+// health checks belong here, not on /health — see docs/DEPLOYMENT.md.
 app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = check => check.Tags.Contains("ready"),

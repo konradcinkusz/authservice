@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Holds the PostgreSQL migration set, and nothing else.
+
+    One migration set cannot serve both providers: the generated DDL differs, and so do the
+    filtered-index expressions this model uses ("IsDeleted" = true versus [IsDeleted] = 1).
+    Keeping each provider's set in its own assembly is the standard answer, and is what
+    Database:MigrationsAssembly selects between at runtime.
+
+    The EF Core provider packages arrive transitively from the service project; nothing is
+    referenced here that is not already referenced there.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AuthService.Migrations.PostgreSQL</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AuthService\AuthService.csproj" />
+  </ItemGroup>
+
+</Project>

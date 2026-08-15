@@ -54,6 +54,64 @@ jobs:
       - name: Verify formatting
         run: dotnet format AuthService.sln --verify-no-changes --severity error
 
+  migrations:
+    name: Migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Install dotnet-ef
+        run: |
+          dotnet tool install --global dotnet-ef
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      # dotnet-ef reads project metadata rather than building the whole solution, so it does
+      # not restore on its own — without this it fails on a missing project.assets.json for
+      # the migration assemblies, which have never been restored in this job.
+      - name: Restore
+        run: dotnet restore AuthService.sln
+
+      # The guard that matters once a migration set exists: a model change without a
+      # matching migration is invisible under EnsureCreated and fails at runtime under
+      # Migrate, which is the failure mode issue #17 is about.
+      #
+      # It is a no-op until a set is committed, deliberately. Generating one needs the
+      # startup project to reference the migrations assembly so `dotnet ef` can load it, and
+      # the migrations assembly already references the startup project for the DbContext
+      # type — a cycle that cannot be broken while ApplicationDbContext lives in the
+      # application project. See docs/schema/README.md; the fix is a structural change, not
+      # a CI flag, and pretending otherwise here would just leave a job that always fails.
+      - name: Migrations match the model
+        run: |
+          set -euo pipefail
+
+          any=false
+          for provider in PostgreSQL SqlServer; do
+            if compgen -G "src/AuthService.Migrations.${provider}/*.cs" > /dev/null; then
+              any=true
+
+              echo "── ${provider} ──"
+              DATABASE_PROVIDER="${provider}" \
+              Database__MigrationsAssembly="AuthService.Migrations.${provider}" \
+              dotnet ef migrations has-pending-model-changes \
+                --project "src/AuthService.Migrations.${provider}" \
+                --startup-project src/AuthService \
+                --context ApplicationDbContext
+            fi
+          done
+
+          if [ "$any" = true ]; then
+            echo "Migrations are in sync with the model."
+          else
+            echo "No migration set committed; nothing to verify."
+            echo "Database:SchemaMode stays on EnsureCreated until one exists."
+          fi
+
   docker:
     name: Docker build
     runs-on: ubuntu-latest

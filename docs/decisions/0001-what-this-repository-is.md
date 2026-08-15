@@ -1,6 +1,6 @@
 # ADR 0001 — What this repository is
 
-**Status:** Proposed (tracks issue #28 — decision is the maintainer's)
+**Status:** Accepted (closes issue #28)
 **Date:** 2026-08-14
 
 ## Context

@@ -58,6 +58,30 @@ dotnet ef migrations add InitialCreate \
   --startup-project src/AuthService
 ```
 
+### The reference cycle you will hit first
+
+`dotnet ef migrations add --project src/AuthService.Migrations.PostgreSQL --startup-project
+src/AuthService` fails with:
+
+```
+File '.../src/AuthService/bin/Debug/net9.0/AuthService.Migrations.PostgreSQL.dll' not found.
+```
+
+This is not a mistake in the command. `dotnet ef` loads the migrations assembly out of the
+**startup project's** output directory, so `AuthService` has to reference
+`AuthService.Migrations.PostgreSQL` — and that project already references `AuthService`, for
+the `ApplicationDbContext` type its `[DbContext(...)]` attributes name. That is a cycle, and
+no combination of flags resolves it.
+
+The standard fix is structural: move `ApplicationDbContext` and the entity types into a
+class library that the application and both migration projects reference. The application
+then references the migration assemblies without a cycle. That is a real refactor and is
+deliberately not done here — it touches every `using` in the service, and `EnsureCreated`
+remains correct for a first deploy against an empty database in the meantime.
+
+Until it happens, the two migration projects exist as the destination, and CI's migration
+check is a no-op that turns into a real guard the moment a set is committed.
+
 Then run with:
 
 ```

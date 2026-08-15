@@ -15,6 +15,7 @@ namespace AuthService.Services;
 
 public class TokenService(
     IConfiguration _configuration,
+    JwtSigningKeys _signingKeys,
     UserManager<ApplicationUser> _userManager,
     ApplicationDbContext _context,
     IAuditService _audit,
@@ -125,7 +126,7 @@ public class TokenService(
             audience: TwoFactorAudience,
             claims: claims,
             expires: DateTime.UtcNow.AddMinutes(TwoFactorChallengeMinutes),
-            signingCredentials: new SigningCredentials(SigningKey, SecurityAlgorithms.HmacSha256));
+            signingCredentials: _signingKeys.SigningCredentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
@@ -143,7 +144,7 @@ public class TokenService(
             ValidateIssuerSigningKey = true,
             ValidIssuer = _configuration["Jwt:Issuer"] ?? "AuthService",
             ValidAudience = TwoFactorAudience,
-            IssuerSigningKey = SigningKey,
+            IssuerSigningKeys = _signingKeys.ValidationKeys,
             ClockSkew = TimeSpan.Zero
         };
 
@@ -245,7 +246,6 @@ public class TokenService(
 
     private string GenerateAccessToken(List<Claim> claims)
     {
-        var credentials = new SigningCredentials(SigningKey, SecurityAlgorithms.HmacSha256);
         var expiration = DateTime.UtcNow.AddMinutes(AccessTokenMinutes);
 
         var token = new JwtSecurityToken(
@@ -253,7 +253,7 @@ public class TokenService(
             audience: _configuration["Jwt:Audience"],
             claims: claims,
             expires: expiration,
-            signingCredentials: credentials
+            signingCredentials: _signingKeys.SigningCredentials
         );
 
         return new JwtSecurityTokenHandler().WriteToken(token);
