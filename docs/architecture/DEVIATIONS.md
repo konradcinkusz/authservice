@@ -7,7 +7,7 @@ The register exists because a weakness left open indefinitely reads as optional.
 dated. A fixed deviation has its row deleted; an accepted one keeps its row with the
 reasoning — an acknowledged deviation is a decision, an unacknowledged one is drift.
 
-Last reviewed in full on **2026-08-14**.
+Last reviewed in full on **2026-08-14**; one row added on **2026-08-25**.
 
 ## Open
 
@@ -19,6 +19,7 @@ Last reviewed in full on **2026-08-14**.
 | 2026-08-14 | **Two providers, one model.** PostgreSQL and SQL Server are both supported, doubling the migration surface, and the SQL Server path has no integration coverage — the test suite runs against SQLite. | Untested support is a promise the project cannot keep | **Open question, not yet decided.** Issue #30 raises whether SQL Server support earns its keep. ADR 0003's "stay small" argues against it. Dropping it would unblock some of the row above. |
 | 2026-08-14 | **`Program.cs` is ~500 lines and does its own service wiring** rather than delegating to composition extensions. | The file every change touches is the file hardest to review | **To fix.** Mechanical, and it has grown steadily — which is the argument for doing it soon rather than never. |
 | 2026-08-14 | **`iss` is a bare string, not a URL.** Tokens carry `iss: "AuthService"` (or the deployment's override), so the discovery document reports that rather than the service's origin. | Consumers expecting the OIDC convention of a URL issuer have to be told otherwise | **Accepted.** Changing it invalidates every issued token and every consumer's `ValidIssuer`, for a cosmetic gain. ADR 0002 records the reasoning; the discovery document is self-consistent as it stands. |
+| 2026-08-25 | **One audience for every token.** `Program.cs` validates a single `ValidAudience`, and the README tells every consumer to validate the same value. | A token minted for one service is accepted by every other service in the estate, so any service that receives a token can replay it, as the caller, anywhere | **To fix.** Tolerable while every validator is a trusted first-party service carrying a human's request. It stops being tolerable the moment a token is handed to something autonomous — see [ADR 0004](../decisions/0004-agent-to-agent-authorization.md), which depends on the fix but is not a prerequisite for it. |
 
 ## Closed by the 2026-08-14 review
 
