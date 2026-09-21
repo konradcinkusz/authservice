@@ -1,3 +1,6 @@
+using AuthService.Mcp;
+using Xunit;
+
 namespace AuthService.Mcp.Tests;
 
 public class StackDetectorTests : IDisposable

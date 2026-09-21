@@ -1,3 +1,5 @@
+using AuthService.Mcp;
+using Xunit;
 using YamlDotNet.Serialization;
 
 namespace AuthService.Mcp.Tests;
