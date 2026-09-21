@@ -383,6 +383,17 @@ the decision to move to RS256 are recorded in
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
+## MCP integration server
+
+[`src/AuthService.Mcp`](src/AuthService.Mcp/README.md) is an MCP (Model Context Protocol)
+server that wires authservice into a consumer project for you: point an MCP client (Claude
+Code, Claude Desktop, ...) at it and call its single `integrate` tool to detect the
+consumer's stack, scaffold `docker-compose.yml` and a JWT validation snippet, generate a
+fresh signing key, pin a real release tag, and optionally deploy — see that directory's
+README for the client config and the tool's parameters.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## Testing
 
 ```bash
