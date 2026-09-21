@@ -22,7 +22,7 @@ public class ComposeScaffolderTests : IDisposable
     [Fact]
     public void AddService_PreservesExistingServices_WhenComposeFileAlreadyExists()
     {
-        var composePath = Path.Combine(_tempDir, "docker-compose.yml");
+        var composePath = Path.Join(_tempDir, "docker-compose.yml");
         File.WriteAllText(composePath, "services:\n  web:\n    image: myapp:latest\n");
 
         ComposeScaffolder.AddService(_tempDir, "v1.2.3", "PostgreSQL");

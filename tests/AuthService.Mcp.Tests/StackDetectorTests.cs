@@ -10,7 +10,7 @@ public class StackDetectorTests : IDisposable
     [Fact]
     public void Detect_ReturnsAspNetCore_WhenCsprojPresent()
     {
-        File.WriteAllText(Path.Combine(_tempDir, "Consumer.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        File.WriteAllText(Path.Join(_tempDir, "Consumer.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
 
         var result = StackDetector.Detect(_tempDir);
 
@@ -21,7 +21,7 @@ public class StackDetectorTests : IDisposable
     public void Detect_ReturnsNodeExpress_WhenPackageJsonHasExpressDependency()
     {
         File.WriteAllText(
-            Path.Combine(_tempDir, "package.json"),
+            Path.Join(_tempDir, "package.json"),
             "{ \"dependencies\": { \"express\": \"^4.19.0\" } }");
 
         var result = StackDetector.Detect(_tempDir);
@@ -33,7 +33,7 @@ public class StackDetectorTests : IDisposable
     public void Detect_IgnoresPackageJson_WhenExpressIsNotADependency()
     {
         File.WriteAllText(
-            Path.Combine(_tempDir, "package.json"),
+            Path.Join(_tempDir, "package.json"),
             "{ \"dependencies\": { \"react\": \"^18.0.0\" } }");
 
         Assert.Throws<InvalidOperationException>(() => StackDetector.Detect(_tempDir));
@@ -42,7 +42,7 @@ public class StackDetectorTests : IDisposable
     [Fact]
     public void Detect_ReturnsPythonFastApi_WhenRequirementsTxtMentionsFastApi()
     {
-        File.WriteAllText(Path.Combine(_tempDir, "requirements.txt"), "fastapi==0.115.0\nuvicorn\n");
+        File.WriteAllText(Path.Join(_tempDir, "requirements.txt"), "fastapi==0.115.0\nuvicorn\n");
 
         var result = StackDetector.Detect(_tempDir);
 
@@ -52,7 +52,7 @@ public class StackDetectorTests : IDisposable
     [Fact]
     public void Detect_ReturnsPythonFastApi_WhenPyprojectTomlMentionsFastApi()
     {
-        File.WriteAllText(Path.Combine(_tempDir, "pyproject.toml"), "[project]\ndependencies = [\"fastapi\"]\n");
+        File.WriteAllText(Path.Join(_tempDir, "pyproject.toml"), "[project]\ndependencies = [\"fastapi\"]\n");
 
         var result = StackDetector.Detect(_tempDir);
 

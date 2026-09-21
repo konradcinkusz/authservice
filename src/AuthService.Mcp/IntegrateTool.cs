@@ -35,6 +35,11 @@ public static class IntegrateTool
         [Description("Run 'docker compose up -d' after scaffolding. Defaults to false (scaffold only).")]
         bool deploy = false)
     {
+        if (!Path.IsPathRooted(targetPath))
+        {
+            throw new ArgumentException($"targetPath '{targetPath}' must be absolute.", nameof(targetPath));
+        }
+
         if (!Directory.Exists(targetPath))
         {
             throw new InvalidOperationException($"targetPath '{targetPath}' does not exist or is not a directory.");
@@ -50,9 +55,9 @@ public static class IntegrateTool
             : $"Image tag: {tag} (pinned)");
 
         var (privateKeyPem, _) = SigningKeyGenerator.GenerateRsaKeyPair();
-        var keyDir = Path.Combine(targetPath, ".authservice");
+        var keyDir = Path.Join(targetPath, ".authservice");
         Directory.CreateDirectory(keyDir);
-        var keyPath = Path.Combine(keyDir, "signing-key.pem");
+        var keyPath = Path.Join(keyDir, "signing-key.pem");
         await File.WriteAllTextAsync(keyPath, privateKeyPem);
         summary.AppendLine($"Signing key: {keyPath} — fresh RS256 key for this project only, never reuse it elsewhere");
 

@@ -14,7 +14,7 @@ public static class JwtConfigGenerator
             _ => throw new ArgumentOutOfRangeException(nameof(stack), stack, null),
         };
 
-        var path = Path.Combine(targetPath, fileName);
+        var path = Path.Join(targetPath, fileName);
         File.WriteAllText(path, template.Replace(UrlPlaceholder, authServiceUrl));
         return path;
     }

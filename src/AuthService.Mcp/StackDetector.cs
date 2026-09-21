@@ -11,19 +11,19 @@ public static class StackDetector
             return ConsumerStack.AspNetCore;
         }
 
-        var packageJsonPath = Path.Combine(targetPath, "package.json");
+        var packageJsonPath = Path.Join(targetPath, "package.json");
         if (File.Exists(packageJsonPath) && HasDependency(packageJsonPath, "express"))
         {
             return ConsumerStack.NodeExpress;
         }
 
-        var requirementsPath = Path.Combine(targetPath, "requirements.txt");
+        var requirementsPath = Path.Join(targetPath, "requirements.txt");
         if (File.Exists(requirementsPath) && ContainsFastApi(requirementsPath))
         {
             return ConsumerStack.PythonFastApi;
         }
 
-        var pyprojectPath = Path.Combine(targetPath, "pyproject.toml");
+        var pyprojectPath = Path.Join(targetPath, "pyproject.toml");
         if (File.Exists(pyprojectPath) && ContainsFastApi(pyprojectPath))
         {
             return ConsumerStack.PythonFastApi;

@@ -9,7 +9,7 @@ public static class ComposeScaffolder
     // docker-compose.yml the consumer already has rather than replacing the file.
     public static string AddService(string targetPath, string imageTag, string databaseProvider)
     {
-        var composePath = Path.Combine(targetPath, "docker-compose.yml");
+        var composePath = Path.Join(targetPath, "docker-compose.yml");
 
         var deserializer = new DeserializerBuilder().Build();
         var serializer = new SerializerBuilder().Build();
