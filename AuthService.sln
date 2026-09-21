@@ -13,6 +13,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AuthService.Migrations.Post
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AuthService.Migrations.SqlServer", "src\AuthService.Migrations.SqlServer\AuthService.Migrations.SqlServer.csproj", "{5B8D3E02-7F5C-4069-8B32-8D6E9F203C45}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AuthService.Mcp", "src\AuthService.Mcp\AuthService.Mcp.csproj", "{952D81FF-5550-471F-90E9-931A7559F943}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AuthService.Mcp.Tests", "tests\AuthService.Mcp.Tests\AuthService.Mcp.Tests.csproj", "{5716EB78-BA77-4D04-A2EE-C8E755EC85F0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,6 +43,14 @@ Global
 		{7C4E1A56-9D38-4B27-A150-2E6F8B0D4C79}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7C4E1A56-9D38-4B27-A150-2E6F8B0D4C79}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7C4E1A56-9D38-4B27-A150-2E6F8B0D4C79}.Release|Any CPU.Build.0 = Release|Any CPU
+		{952D81FF-5550-471F-90E9-931A7559F943}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{952D81FF-5550-471F-90E9-931A7559F943}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{952D81FF-5550-471F-90E9-931A7559F943}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{952D81FF-5550-471F-90E9-931A7559F943}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5716EB78-BA77-4D04-A2EE-C8E755EC85F0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5716EB78-BA77-4D04-A2EE-C8E755EC85F0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5716EB78-BA77-4D04-A2EE-C8E755EC85F0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5716EB78-BA77-4D04-A2EE-C8E755EC85F0}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

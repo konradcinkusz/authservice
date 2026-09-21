@@ -1,0 +1,67 @@
+name: Publish MCP server
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggered on every mcp-v* tag push — its own tag namespace, independent of the
+# authservice image's v* tags, so a change to the MCP installer never forces a
+# version bump on the service it integrates, or the other way round. As with
+# publish-image.yml, the tag is expected to come from publishing a GitHub
+# Release first, so 'gh release upload' below has a release to attach to.
+#
+# Publishes self-contained, single-file binaries per platform — no .NET runtime
+# required on the consumer's machine, only the one file referenced from .mcp.json.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    tags:
+      - 'mcp-v*'
+  workflow_dispatch: {}
+
+concurrency:
+  group: publish-mcp
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish (${{ matrix.rid }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rid: [linux-x64, linux-arm64, osx-x64, osx-arm64, win-x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish self-contained single file
+        run: |
+          dotnet publish src/AuthService.Mcp/AuthService.Mcp.csproj \
+            --runtime ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            --configuration Release \
+            --output "publish/${{ matrix.rid }}"
+
+      - name: Package
+        id: package
+        run: |
+          cd "publish/${{ matrix.rid }}"
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            asset="authservice-mcp-${{ matrix.rid }}.zip"
+            zip -r "../../$asset" .
+          else
+            asset="authservice-mcp-${{ matrix.rid }}.tar.gz"
+            tar -czf "../../$asset" .
+          fi
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to the release for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" "${{ steps.package.outputs.asset }}" --clobber
