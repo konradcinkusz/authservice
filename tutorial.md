@@ -137,7 +137,7 @@ instance of its own, on Fly.io or otherwise. What it does instead:
    primary_region = "fra"
 
    [build]
-     image = "ghcr.io/konradcinkusz/authservice:v0.1.0"   # pin a real tag
+     image = "ghcr.io/konradcinkusz/authservice:v0.3.2"   # pin a real tag
 
    [env]
      ASPNETCORE_ENVIRONMENT = "Production"
@@ -150,7 +150,7 @@ instance of its own, on Fly.io or otherwise. What it does instead:
    ```bash
    flyctl deploy --config flyio/authservice.fly.toml \
      --app <yourproject>-authservice \
-     --image ghcr.io/konradcinkusz/authservice:v0.1.0
+     --image ghcr.io/konradcinkusz/authservice:v0.3.2
    ```
 
    Set `ConnectionStrings__DefaultConnection` and `Jwt__SecretKey` as Fly secrets on

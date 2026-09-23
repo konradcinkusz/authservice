@@ -193,6 +193,14 @@
         <h3>Bring your own database</h3>
         <p>PostgreSQL by default, or SQL Server — selected by configuration, not by fork. Rate limiting, CORS, and Swagger with JWT bearer auth are already wired in.</p>
       </div>
+      <div class="card">
+        <h3>Sign-in for MCP connectors</h3>
+        <p>An optional OAuth 2.1 authorization server, so Claude can call your MCP server on behalf of your users — authorization code with PKCE, a consent step, and tokens that verify against the same JWKS. Off until you configure a client.</p>
+      </div>
+      <div class="card">
+        <h3>Set up by an agent</h3>
+        <p>An MCP server with a single <code>integrate</code> tool: point Claude Code at your project and it detects the stack, adds the service to your compose file, generates a signing key, and writes the token validation for you.</p>
+      </div>
     </div>
   </section>
 
@@ -221,6 +229,7 @@
       <a href="https://github.com/konradcinkusz/authservice/blob/main/DEMO.md">Demo walkthrough</a>
       <a href="https://github.com/konradcinkusz/authservice/blob/main/EXTRACTION.md">Design notes</a>
       <a href="https://github.com/konradcinkusz/authservice/blob/main/tutorial.md">Tutorial</a>
+      <a href="https://github.com/konradcinkusz/authservice/blob/main/docs/DEPLOYMENT.md">Deployment guide</a>
       <a href="https://github.com/konradcinkusz/authservice/blob/main/LICENSE">MIT License</a>
     </div>
   </section>

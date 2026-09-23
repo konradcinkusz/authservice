@@ -14,8 +14,9 @@ whole integration in a single call rather than making a client sequence several 
    signing key must never be reused across two instances (see the main README's "API
    overview"), so `integrate` always generates a new one rather than accepting one as input.
 4. Generates a JWT bearer validation snippet for the detected stack.
-5. Looks up the latest published `authservice` GitHub Release to pin a real tag; falls back
-   to `:latest` with a note in the output if no release exists yet.
+5. Looks up the latest published `authservice` service release (a `v*` tag; this tool's own
+   `mcp-v*` releases are skipped) to pin a real tag; falls back to `:latest` with a note in the
+   output if no release exists yet.
 6. Optionally (`deploy: true`) runs `docker compose up -d`.
 
 ## Running it
@@ -78,3 +79,6 @@ Same pattern as the main service's `v*`/`publish-image.yml`, but in its own `mcp
 namespace so the two version independently: tag `mcp-v0.1.0`, publish a GitHub Release
 against it, and `.github/workflows/publish-mcp.yml` attaches self-contained single-file
 binaries for linux-x64, linux-arm64, osx-x64, osx-arm64, and win-x64 to that release.
+
+Untick **Set as the latest release** when publishing it, so that the repository page and
+`releases/latest` keep pointing at the service. `integrate` pins only `v*` releases either way.
