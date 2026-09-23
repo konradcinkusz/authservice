@@ -154,8 +154,9 @@ public class TokenService(
         catch (Exception ex) when (_authorizationServer.Tolerates(ex))
         {
             // No client is configured, and this database may predate the library's tables
-            // (AuthorizationServerPosture): there is nothing there to revoke.
-            _logger.LogDebug(ex, "Skipped revoking authorization-server grants for user {UserId}: the server is off and its tables are unavailable", userId);
+            // (AuthorizationServerPosture): there is nothing there to revoke. The user id stays
+            // out of the message: callers pass it straight from a request.
+            _logger.LogDebug(ex, "Skipped revoking authorization-server grants: the server is off and its tables are unavailable");
         }
     }
 
