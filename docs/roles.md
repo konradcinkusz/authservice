@@ -30,6 +30,13 @@ that can manufacture more admins.
 Both role-change endpoints revoke the target's refresh tokens, so a role change takes effect
 on the next request rather than up to one access-token lifetime later.
 
+Revoking a user's sessions also ends every MCP connection the user has made
+([ADR 0005](decisions/0005-mcp-authorization-server.md)). That holds for every path that
+revokes: the admin paths above, and the user's own logout, password change or reset, turning
+off 2FA, and account deletion. The user's authorizations are revoked, which also forgets their
+consent, together with every refresh token issued under them. An MCP access token already
+issued runs out on its own, within `AuthorizationServer:AccessTokenLifetimeMinutes`.
+
 The first `SuperAdmin` comes from `InitialAdmin:Email` / `InitialAdmin:Password` at startup,
 and only when no `SuperAdmin` exists yet.
 
@@ -80,6 +87,21 @@ existing member to `Owner` and steps the caller down to `Admin` — or to `Membe
 `"retainAdminRole": false`. Both changes commit together, so the organization is never
 momentarily ownerless or briefly double-owned.
 
+## MCP connector clients
+
+These endpoints exist only once an MCP client is configured
+([ADR 0005](decisions/0005-mcp-authorization-server.md)). None of them takes a platform or
+organization role. Each acts for the signed-in user, on that user's own account.
+
+| Endpoint | Called by | Access |
+| --- | --- | --- |
+| `GET /.well-known/oauth-authorization-server` | Anyone | Anonymous. Public metadata |
+| `GET/POST /connect/authorize` | The user's browser, sent by a registered client | Anonymous, because it is where sign-in starts. It serves only registered clients, redirects only to their exact redirect URIs, and requires PKCE |
+| `POST /connect/token` | A registered client | The client's secret, plus a code and its PKCE verifier or a refresh token. Rate-limited per client |
+| `/connect/signin`, `/connect/2fa`, `/connect/consent`, `/oauth/callback` (Hosted mode) | The user's browser | Anonymous, because these pages are the sign-in. Every form carries an antiforgery token |
+| `GET /api/v1/oauth/interactions/{handle}`, `POST …/accept`, `…/deny` (External mode) | The consumer's BFF, with the user's token | Any authenticated user holding the handle. The first user to decide an interaction is the only one who can. A decision grants only what the client asked for and is allowed |
+| `DELETE /api/v1/auth/connected-clients/{clientId}` | The user | Any authenticated user, for their own connections only |
+
 ## Token claims
 
 Tokens carry organization membership so downstream services can authorize without calling back:
@@ -89,12 +111,14 @@ organization                      = <organizationId>     (one per membership)
 organization:<organizationId>:role = Owner | Admin | Member
 ```
 
-Membership changes reach a token on the next refresh. Where a change must take effect
-immediately, revoke the user's refresh tokens — `POST /api/v1/admin/users/{id}/revoke-sessions`.
+Tokens issued to MCP clients carry the same claims, rebuilt from the user's current state on
+every refresh. Membership changes reach a token on the next refresh. Where a change must take
+effect immediately, revoke the user's refresh tokens — `POST /api/v1/admin/users/{id}/revoke-sessions`,
+which ends their MCP connections as well.
 
 ## Adding an endpoint
 
-If you add an endpoint to `OrganizationsController` or `AdminController`, add a row to the
-matching table above in the same pull request. The permission model previously existed only
-implicitly across ~800 lines of controller, which is how the two gaps fixed above went
-unnoticed.
+If you add an endpoint to `OrganizationsController`, `AdminController` or the authorization
+server, add a row to the matching table above in the same pull request. The permission model
+previously existed only implicitly across ~800 lines of controller, which is how the two gaps
+fixed above went unnoticed.

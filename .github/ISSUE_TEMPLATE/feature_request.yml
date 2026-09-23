@@ -6,7 +6,9 @@ body:
     attributes:
       value: |
         This project stays deliberately small: it is an auth service, not an application
-        backend. See [CONTRIBUTING.md](https://github.com/konradcinkusz/authservice/blob/main/CONTRIBUTING.md#scope)
+        backend, and not a general OAuth or OpenID Connect provider. Its authorization server
+        serves pre-registered MCP connector clients only (ADR 0005). See
+        [CONTRIBUTING.md](https://github.com/konradcinkusz/authservice/blob/main/CONTRIBUTING.md#scope)
         for where the line is drawn.
 
   - type: textarea
@@ -37,4 +39,6 @@ body:
       label: Scope check
       options:
         - label: This is about identity, credentials, tokens, sessions, or organization membership — not application domain logic.
+          required: true
+        - label: It does not turn the authorization server into a general OAuth or OpenID Connect provider (ID tokens, dynamic client registration, introspection, other grants or client types), which would need a new ADR first.
           required: true

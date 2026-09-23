@@ -1,6 +1,7 @@
 # ADR 0003 — Scope: stay small
 
-**Status:** Accepted (closes issue #30)
+**Status:** Accepted (closes issue #30). Amended by [ADR 0005](0005-mcp-authorization-server.md):
+the first exclusion below no longer covers pre-registered MCP connector clients.
 **Date:** 2026-08-14
 
 ## Context
@@ -36,6 +37,12 @@ lockout surface.
 - Becoming an OIDC **provider**: authorization code flow, an authorization endpoint, a
   standards-shaped token endpoint, consent screens, client registration, introspection. That is
   Keycloak's and Ory's job, and re-adding OpenIddict would undo the extraction decision.
+
+  *Amended by ADR 0005 (2026-09-23):* for pre-registered MCP connector clients, this service is
+  now an OAuth 2.1 authorization server — authorization code with PKCE, a token endpoint,
+  consent, clients from configuration — built on OpenIddict, and off unless a client is
+  configured. The rest of this item stands: no OpenID Connect provider features, no
+  introspection, no dynamic client registration.
 
   This exclusion is about *flows*, not about the file name. An earlier revision of this ADR
   listed `/.well-known/openid-configuration` itself as out of scope; that conflated the

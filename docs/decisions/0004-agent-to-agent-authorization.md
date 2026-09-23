@@ -2,6 +2,10 @@
 
 **Status:** Proposed
 **Date:** 2026-08-25
+**See also:** [ADR 0005](0005-mcp-authorization-server.md), which amended ADR 0003 for MCP
+connector clients — the third-party, browser-facing case this ADR leaves excluded — and brought
+back OpenIddict to serve it. Nothing here was accepted or rejected by it; agent issuance
+remains as proposed below.
 
 ## Context
 

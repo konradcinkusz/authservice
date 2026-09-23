@@ -50,9 +50,10 @@ Fixes land on `main` and in the next release. There is no long-term support bran
 
 ## Scope
 
-**In scope** — anything in this repository: the ASP.NET Core service, its Dockerfile, the
-GitHub Actions workflows, the Fly.io deployment configuration, and the documented
-configuration defaults.
+**In scope** — anything in this repository: the ASP.NET Core service, including its OAuth 2.1
+authorization server for MCP connector clients and the sign-in and consent pages it serves,
+its Dockerfile, the GitHub Actions workflows, the reference deployment configuration in
+`docs/DEPLOYMENT.md`, and the documented configuration defaults.
 
 **Out of scope**
 
@@ -84,5 +85,15 @@ Be aware of the following when evaluating this project:
   message was skipped; it writes the token itself only in Development. A deployment that never
   sets `SendGrid:ApiKey` therefore has no working password-reset or verification flow — which
   is why email verification stays off in that configuration rather than locking users out.
+- **The MCP authorization server is off unless you configure a client.** With
+  `AuthorizationServer:Clients` empty it serves no endpoint, page or metadata. Once a client is
+  configured, it needs RS256 signing and a durable encryption key from a platform secret, and
+  it refuses to start without them. In its default Hosted mode the service renders HTML sign-in
+  and consent pages. They run no script, have a strict CSP, cannot be framed, and protect their
+  forms with antiforgery tokens. Revoking a user's sessions stops MCP refreshes at once. An MCP
+  access token already issued stays valid until it expires, 15 minutes by default, because
+  resource servers validate it offline and there is no introspection. The token endpoint is
+  rate-limited per client rather than per IP, because all of a client's users can reach it from
+  one egress range. See [ADR 0005](docs/decisions/0005-mcp-authorization-server.md).
 - Security-relevant configuration is summarised in the service's startup log line, so you can
   confirm from the logs which posture a deployment actually came up in.
