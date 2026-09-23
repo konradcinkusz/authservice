@@ -462,7 +462,7 @@ public class AuthorizationFlowTests : IAsyncLifetime
         await _factory.WithScopeAsync(async services =>
         {
             var context = services.GetRequiredService<ApplicationDbContext>();
-            foreach (var consent in await context.UserConsents.Where(c => c.User.Email == email).ToListAsync())
+            foreach (var consent in await context.UserConsents.Where(c => c.User!.Email == email).ToListAsync())
                 consent.Version = "2020-01-01";
             await context.SaveChangesAsync();
         });
