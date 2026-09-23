@@ -8,11 +8,19 @@ readability is the product as much as the features are.
 `EXTRACTION.md` sets the boundary: **this is an auth service, not an application backend.**
 
 In scope: identity, credentials, tokens, sessions, OAuth sign-in, organizations and their
-membership roles, and the administrative surface over those things.
+membership roles, and the administrative surface over those things. Also in scope: acting as the
+OAuth 2.1 authorization server for pre-registered MCP connector clients (authorization code with
+PKCE, refresh, consent, clients from configuration), per
+[ADR 0005](docs/decisions/0005-mcp-authorization-server.md).
 
 Out of scope: application domain models, billing, notifications beyond auth-related email,
 file storage, and anything else a consuming application should own. A change that makes this
 service know about your product's nouns is one we will ask you to keep in your own fork.
+
+Also out of scope: growing the authorization server into a general OAuth or OpenID Connect
+provider. That means ID tokens, `userinfo`, dynamic client registration, introspection, other
+grants, or clients other than MCP connectors. [ADR 0003](docs/decisions/0003-scope.md) draws
+that line, and moving it takes a new ADR, not a pull request.
 
 If you are unsure, open an issue before writing the code. That is cheaper for both of us.
 

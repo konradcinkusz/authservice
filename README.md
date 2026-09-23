@@ -54,6 +54,10 @@ detailed rationale and what was kept vs. dropped.
   granted a role, who locked an account, and when.
 - **Consent tracking and data export**: versioned Terms/Privacy/Cookie acceptance records,
   plus a self-service export endpoint (GDPR Art. 15/20) matching the existing erasure flow.
+- **Sign-in for MCP connectors** (optional): an OAuth 2.1 authorization server, authorization
+  code with PKCE, through which MCP clients such as Claude connect to your MCP server on a
+  user's behalf. It is off until a client is configured; see
+  [Registering an MCP client](docs/DEPLOYMENT.md#registering-an-mcp-client).
 - **Dual database support**: PostgreSQL (default) or SQL Server, selected by configuration.
 - **Rate limiting** (with a configurable proxy trust boundary), CORS, and Swagger/OpenAPI
   with JWT bearer auth built in.
@@ -65,6 +69,14 @@ detailed rationale and what was kept vs. dropped.
 This is an auth service, not an application backend. It does not include billing,
 subscription tiers, usage quotas, or any product-specific data (notes, messages, etc.).
 Build those as separate services that trust JWTs issued here.
+
+It is not a general OAuth or OpenID Connect provider either. The authorization server serves
+pre-registered MCP connector clients and nothing else. It has no ID tokens, `userinfo` or
+end-session endpoint, no dynamic client registration, no token introspection, and no
+client-credentials or device grant. SAML, SCIM and an admin UI are out as well. For those, use
+Keycloak, Ory or Zitadel. The boundary is recorded in
+[ADR 0003](docs/decisions/0003-scope.md), as amended by
+[ADR 0005](docs/decisions/0005-mcp-authorization-server.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -117,7 +129,7 @@ Two modes, selected by `Jwt:Algorithm`:
 | `Jwt:Algorithm` | `HS256` or `RS256`. Unset, it is inferred: `RS256` when a private key is configured, `HS256` otherwise |
 | `Jwt:PrivateKeyPem` / `Jwt:PrivateKeyPath` | PKCS#8 RSA private key (2048-bit minimum). Required under RS256 |
 | `Jwt:PreviousPublicKeyPem` / `Jwt:PreviousPublicKeyPath` | A retired public key, kept valid for verification while tokens signed with it are still alive |
-| `Jwt:PublicBaseUrl` | Public origin of this service, used to build `jwks_uri`. Defaults to the request's own scheme and host |
+| `Jwt:PublicBaseUrl` | Public origin of this service, used to build `jwks_uri`. Defaults to the request's own scheme and host. Required, as an https origin, once an MCP client is configured, because it is then also the issuer of MCP tokens |
 
 **HS256** is the zero-ceremony default and is correct while this service is the only thing
 validating its own tokens. Verifying and signing are the same capability under a symmetric
@@ -144,8 +156,10 @@ Two endpoints are then served anonymously:
 old public key to `Jwt:PreviousPublicKeyPem`, set the new private key as `Jwt:PrivateKeyPem`,
 and deploy. Both keys appear in the JWKS and both verify; only the new one signs. Drop the
 previous key once every token issued before the rotation has expired
-(`Jwt:ExpirationMinutes`). The `kid` header is derived from the key itself, so consumers
-select the right one without configuration.
+(`Jwt:ExpirationMinutes`). With an MCP client configured, keep it for a refresh-token lifetime
+instead (`AuthorizationServer:RefreshTokenLifetimeDays`, 30 days by default), because the
+authorization server signs its refresh tokens with the same key. The `kid` header is derived
+from the key itself, so consumers select the right one without configuration.
 
 Optional:
 
@@ -164,6 +178,15 @@ Optional:
 | `Database:SchemaMode` | `EnsureCreated` (default), `Migrate`, or `None` — see [Database schema](#database-schema) |
 | `Database:MigrationsAssembly` | `AuthService.Migrations.PostgreSQL` or `AuthService.Migrations.SqlServer`, matching the provider, when `SchemaMode=Migrate` |
 | `Swagger:Enabled` | Serve Swagger UI. Defaults to on in Development, off elsewhere |
+| `AuthorizationServer:Clients` | MCP connector clients. With none, the default, the authorization server does not exist. Each takes a client id, a secret, redirect URIs, scopes and one or more resources |
+| `AuthorizationServer:EncryptionKey` | 32 random bytes, base64, from a platform secret. Required once a client is configured |
+| `AuthorizationServer:Scopes` | What the consent step says about each scope |
+| `AuthorizationServer:Interaction:Mode` | `Hosted` (default): authservice renders the sign-in and consent pages. `External`: your frontend does, through the interaction API |
+
+The authorization server also needs RS256 signing and `Jwt:PublicBaseUrl`. Startup refuses an
+unsafe client configuration with a message naming the setting. The full procedure, including
+the Claude connector settings, is in
+[Registering an MCP client](docs/DEPLOYMENT.md#registering-an-mcp-client).
 
 ### Security-relevant settings
 
@@ -345,6 +368,16 @@ for the pre-v1 contract; prefer `/api/v1`. See `/swagger` for the full, generate
 - `GET /api/v1/admin/stats`, `/users`, `/users/{userId}`, `/users/deleted`, `/audit-events`
 - `POST /api/v1/admin/users/{userId}/roles`, `/lock`, `/unlock`, `/restore`, `/revoke-sessions`
 - `DELETE /api/v1/admin/users/{userId}`
+- `DELETE /api/v1/auth/connected-clients/{clientId}` (once an MCP client is configured)
+- `GET /api/v1/oauth/interactions/{handle}`, `POST .../accept`, `.../deny` (External interaction mode only)
+
+Once an MCP client is configured, the authorization server adds these routes outside `/api`:
+`GET /.well-known/oauth-authorization-server` (RFC 8414 metadata), `GET/POST /connect/authorize`
+and `POST /connect/token`. In Hosted mode it also adds the sign-in and consent pages under
+`/connect/` and `/oauth/callback`. Its access tokens name this service's URL as issuer and the MCP
+server as their only audience. This API refuses them. An MCP server that validates its audience,
+as the runbook shows, refuses this API's tokens. The token contract is in
+[ADR 0005](docs/decisions/0005-mcp-authorization-server.md).
 
 `GET /health` is liveness (static). `GET /health/ready` is readiness and returns 503 until
 the schema is initialised and the database is reachable — point platform health checks there.
@@ -388,6 +421,10 @@ Code, Claude Desktop, ...) at it and call its single `integrate` tool to detect 
 consumer's stack, scaffold `docker-compose.yml` and a JWT validation snippet, generate a
 fresh signing key, pin a real release tag, and optionally deploy — see that directory's
 README for the client config and the tool's parameters.
+
+This is a different use of MCP from the authorization server above. Here, authservice ships an
+MCP server that helps you set authservice up. There, authservice signs users in so that MCP
+clients such as Claude can call *your* MCP server for them.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

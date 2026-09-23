@@ -19,10 +19,17 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<UserConsent> UserConsents => Set<UserConsent>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<OAuthExchangeCode> OAuthExchangeCodes => Set<OAuthExchangeCode>();
+    public DbSet<AuthorizationInteraction> AuthorizationInteractions => Set<AuthorizationInteraction>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        // The authorization server's applications, authorizations, scopes and tokens (ADR 0005).
+        // Mapped here rather than through DbContextOptions so that every database this model
+        // reaches has the tables, whether it was built by a migration, by EnsureCreated or by the
+        // test host: revocation and pruning use them even when no client is configured.
+        builder.UseOpenIddict();
 
         // Detect provider for conditional filtered index syntax
         var isSqlServer = Database.ProviderName == "Microsoft.EntityFrameworkCore.SqlServer";
@@ -142,6 +149,30 @@ public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
             entity.HasOne(c => c.User)
                 .WithMany()
                 .HasForeignKey(c => c.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // AuthorizationInteraction — a request waiting on a consumer's frontend (External mode).
+        // Every presentable value is looked up by its hash, and the ticket's is unique so a
+        // redemption can be a single conditional UPDATE.
+        builder.Entity<AuthorizationInteraction>(entity =>
+        {
+            entity.HasKey(i => i.Id);
+            entity.Property(i => i.HandleHash).IsRequired().HasMaxLength(64);
+            entity.Property(i => i.BrowserBindingHash).IsRequired().HasMaxLength(64);
+            entity.Property(i => i.ClientId).IsRequired().HasMaxLength(100);
+            entity.Property(i => i.RequestQuery).IsRequired().HasMaxLength(4000);
+            entity.Property(i => i.Scopes).IsRequired().HasMaxLength(1000);
+            entity.Property(i => i.Resource).IsRequired().HasMaxLength(500);
+            entity.Property(i => i.Decision).HasMaxLength(16);
+            entity.Property(i => i.TicketHash).HasMaxLength(64);
+            entity.HasIndex(i => i.HandleHash).IsUnique();
+            entity.HasIndex(i => i.TicketHash).IsUnique();
+            entity.HasIndex(i => i.ExpiresAt);
+
+            entity.HasOne(i => i.User)
+                .WithMany()
+                .HasForeignKey(i => i.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

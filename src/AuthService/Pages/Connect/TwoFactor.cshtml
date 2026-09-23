@@ -1,0 +1,26 @@
+@page "/connect/2fa"
+@model TwoFactorModel
+@{
+    ViewData["Title"] = "Two-factor authentication";
+    Layout = "_ConnectLayout";
+}
+
+<h1>Two-factor authentication</h1>
+<p class="muted">Enter the code from your authenticator app.</p>
+
+@if (Model.Error is not null)
+{
+    <p class="error" role="alert" data-testid="twofactor-error">@Model.Error</p>
+}
+
+<form method="post" data-testid="twofactor-form">
+    <input type="hidden" asp-for="ReturnUrl" />
+
+    <label for="code">Authentication code</label>
+    <input id="code" name="Code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" />
+
+    <label for="recovery">Or a recovery code</label>
+    <input id="recovery" name="RecoveryCode" type="text" autocomplete="off" maxlength="32" />
+
+    <button type="submit">Verify</button>
+</form>

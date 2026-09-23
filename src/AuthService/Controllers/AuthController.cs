@@ -31,6 +31,7 @@ public class AuthController(
     IOptions<NetworkOptions> _networkOptions,
     EmailCapabilities _emailCapabilities,
     IAuditService _audit,
+    SignInFlow _signInFlow,
     ILogger<AuthController> _logger
 ) : ControllerBase
 {
@@ -210,69 +211,44 @@ public class AuthController(
         if (!ModelState.IsValid)
             return BadRequest(ModelState);
 
-        var user = await _userManager.FindByEmailAsync(request.Email);
-        if (user == null || user.IsDeleted)
+        // The decision is shared with the authorization server's sign-in page (SignInFlow);
+        // what this endpoint owns is how each outcome is answered.
+        var outcome = await _signInFlow.CheckPasswordAsync(request.Email, request.Password);
+        var user = outcome.User;
+
+        switch (outcome.Status)
         {
-            await _audit.LogAsync(AuditAction.LoginFailed, succeeded: false,
-                metadata: new { email = request.Email, reason = "unknown_or_deleted_account" });
-            return Unauthorized(new { error = "Invalid email or password" });
-        }
+            case PasswordSignInStatus.Failed:
+                return Unauthorized(new { error = "Invalid email or password" });
 
-        var result = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
-
-        if (!result.Succeeded)
-        {
-            // Only disclose lockout to a caller who already proved they know the password —
-            // otherwise "locked out" is a free account-existence oracle for anyone willing to
-            // burn five guesses, and lockout is trivially reachable by an attacker.
-            if (result.IsLockedOut && await _userManager.CheckPasswordAsync(user, request.Password))
-            {
-                await _audit.LogAsync(AuditAction.LoginLockedOut, targetUserId: user.Id, succeeded: false,
-                    metadata: new { lockoutEnd = user.LockoutEnd });
-
+            case PasswordSignInStatus.LockedOut:
                 return Unauthorized(new
                 {
                     error = "Account is temporarily locked after too many failed sign-in attempts.",
                     lockedOut = true,
-                    lockoutEnd = user.LockoutEnd
+                    lockoutEnd = user!.LockoutEnd
                 });
-            }
 
-            await _audit.LogAsync(AuditAction.LoginFailed, targetUserId: user.Id, succeeded: false,
-                metadata: new { reason = result.IsLockedOut ? "locked_out" : "invalid_password" });
+            case PasswordSignInStatus.EmailNotConfirmed:
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    error = "Email address has not been verified.",
+                    emailVerificationRequired = true
+                });
 
-            return Unauthorized(new { error = "Invalid email or password" });
+            case PasswordSignInStatus.RequiresTwoFactor:
+                // First factor passed. Hand back a challenge that is useless for anything
+                // except completing this login.
+                return Ok(new TwoFactorRequiredResponse(
+                    RequiresTwoFactor: true,
+                    ChallengeToken: _tokenService.GenerateTwoFactorChallengeToken(user!),
+                    ExpiresIn: 300));
         }
 
-        if (RequireConfirmedEmail && !user.EmailConfirmed)
-        {
-            return StatusCode(StatusCodes.Status403Forbidden, new
-            {
-                error = "Email address has not been verified.",
-                emailVerificationRequired = true
-            });
-        }
-
-        // First factor passed. If a second is configured, stop here and hand back a challenge
-        // that is useless for anything except completing this login.
-        if (user.TwoFactorEnabled)
-        {
-            var challengeToken = _tokenService.GenerateTwoFactorChallengeToken(user);
-
-            return Ok(new TwoFactorRequiredResponse(
-                RequiresTwoFactor: true,
-                ChallengeToken: challengeToken,
-                ExpiresIn: 300));
-        }
-
-        user.LastLoginAt = DateTime.UtcNow;
-        await _userManager.UpdateAsync(user);
-
+        await _signInFlow.CompleteSignInAsync(user!);
         _logger.LogInformation("User {Email} logged in successfully", request.Email);
-        await _audit.LogAsync(AuditAction.LoginSucceeded, actorUserId: user.Id, actorEmail: user.Email,
-            targetUserId: user.Id);
 
-        var tokenResponse = await _tokenService.GenerateTokensAsync(user);
+        var tokenResponse = await _tokenService.GenerateTokensAsync(user!);
 
         return Ok(tokenResponse);
     }

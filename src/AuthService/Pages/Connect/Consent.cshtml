@@ -1,0 +1,30 @@
+@page "/connect/consent"
+@model ConsentModel
+@{
+    ViewData["Title"] = "Allow access";
+    Layout = "_ConnectLayout";
+}
+
+<h1><span data-testid="consent-client">@Model.ClientName</span> wants access to your account</h1>
+<p class="muted">Signed in as <strong data-testid="consent-user">@Model.UserEmail</strong>. If you allow it, you will be returned to <strong data-testid="consent-redirect-host">@Model.RedirectHost</strong>.</p>
+
+<p>It will be able to:</p>
+<ul class="scopes" data-testid="consent-scopes">
+    @foreach (var scope in Model.Scopes)
+    {
+        <li data-scope="@scope.Name">@scope.Description</li>
+    }
+</ul>
+
+<form method="post" action="@AuthService.Extensions.AuthorizationServerDefaults.AuthorizationEndpoint" asp-antiforgery="true" data-testid="consent-form">
+    @foreach (var parameter in Model.Parameters)
+    {
+        <input type="hidden" name="@parameter.Key" value="@parameter.Value" />
+    }
+    <div class="row">
+        <button type="submit" name="consent" value="deny" class="secondary">Deny</button>
+        <button type="submit" name="consent" value="accept">Allow</button>
+    </div>
+</form>
+
+<p class="divider">You can disconnect it at any time.</p>

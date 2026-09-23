@@ -1,13 +1,16 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using AuthService.Data;
 using AuthService.Extensions;
 using AuthService.Models;
+using OpenIddict.Abstractions;
 
 namespace AuthService.Services;
 
 /// <summary>
 /// Background service that permanently deletes soft-deleted user accounts after their retention period expires.
-/// Runs periodically to clean up accounts scheduled for permanent deletion.
+/// Runs periodically to clean up accounts scheduled for permanent deletion, and prunes the
+/// authorization server's expired and revoked rows on the same schedule.
 /// </summary>
 public class UserCleanupService : BackgroundService
 {
@@ -15,6 +18,13 @@ public class UserCleanupService : BackgroundService
     private readonly ILogger<UserCleanupService> _logger;
     private readonly IMigrationCompletionSignal _migrationSignal;
     private readonly TimeSpan _checkInterval = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// How long a revoked, redeemed or expired authorization-server row is kept before pruning:
+    /// the library's own default. A redeemed refresh token is what lets a replay be detected, so
+    /// it is not pruned the moment it is used.
+    /// </summary>
+    private static readonly TimeSpan AuthorizationServerRetention = TimeSpan.FromDays(14);
 
     public UserCleanupService(
         IServiceScopeFactory scopeFactory,
@@ -43,17 +53,27 @@ public class UserCleanupService : BackgroundService
                 _logger.LogError(ex, "Error during user account cleanup");
             }
 
+            try
+            {
+                await PruneAuthorizationServerAsync(stoppingToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
+            {
+                _logger.LogError(ex, "Error pruning the authorization server's expired rows");
+            }
+
             await Task.Delay(_checkInterval, stoppingToken);
         }
 
         _logger.LogInformation("User cleanup service stopped");
     }
 
-    private async Task CleanupExpiredUsersAsync(CancellationToken cancellationToken)
+    internal async Task CleanupExpiredUsersAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var tokenService = scope.ServiceProvider.GetRequiredService<ITokenService>();
+        var authorizationServer = scope.ServiceProvider.GetRequiredService<AuthorizationServerPosture>();
 
         var now = DateTime.UtcNow;
 
@@ -78,6 +98,19 @@ public class UserCleanupService : BackgroundService
                 // Ensure all refresh tokens are revoked before deleting
                 await tokenService.RevokeRefreshTokensAsync(user.Id);
 
+                // The authorization server keeps the user id as a plain subject string with no
+                // foreign key, so the cascade that clears RefreshTokens never reaches these rows.
+                try
+                {
+                    await DeleteAuthorizationServerRowsAsync(scope.ServiceProvider, user.Id, cancellationToken);
+                }
+                catch (Exception ex) when (authorizationServer.Tolerates(ex))
+                {
+                    // No client is configured, and this database may predate the library's
+                    // tables (AuthorizationServerPosture): nothing there to delete.
+                    _logger.LogDebug(ex, "Skipped deleting authorization-server rows for user {UserId}: the server is off and its tables are unavailable", user.Id);
+                }
+
                 var result = await userManager.DeleteAsync(user);
                 if (result.Succeeded)
                 {
@@ -97,6 +130,69 @@ public class UserCleanupService : BackgroundService
             {
                 _logger.LogError(ex, "Failed to permanently delete user account {UserId}", user.Id);
             }
+        }
+    }
+
+    /// <summary>Deletes every authorization and token the authorization server holds for the user.</summary>
+    internal static async Task DeleteAuthorizationServerRowsAsync(IServiceProvider services, string userId, CancellationToken cancellationToken)
+    {
+        var authorizations = services.GetRequiredService<IOpenIddictAuthorizationManager>();
+        var tokens = services.GetRequiredService<IOpenIddictTokenManager>();
+
+        // An authorization is deleted together with its tokens.
+        var ownAuthorizations = new List<object>();
+        await foreach (var authorization in authorizations.FindBySubjectAsync(userId, cancellationToken))
+            ownAuthorizations.Add(authorization);
+        foreach (var authorization in ownAuthorizations)
+            await authorizations.DeleteAsync(authorization, cancellationToken);
+
+        var ownTokens = new List<object>();
+        await foreach (var token in tokens.FindBySubjectAsync(userId, cancellationToken))
+            ownTokens.Add(token);
+        foreach (var token in ownTokens)
+            await tokens.DeleteAsync(token, cancellationToken);
+    }
+
+    internal async Task PruneAuthorizationServerAsync(CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var services = scope.ServiceProvider;
+        var authorizationServer = services.GetRequiredService<AuthorizationServerPosture>();
+
+        long tokens = 0, authorizations = 0;
+        int interactions;
+        try
+        {
+            // With no client configured, the client sync has already deleted every client along
+            // with its grants, so the library has nothing to prune. It is not asked to: a prune
+            // that fails is retried a thousand times over, which a database without its tables
+            // would pay every hour.
+            if (authorizationServer.Enabled)
+            {
+                var threshold = DateTimeOffset.UtcNow - AuthorizationServerRetention;
+                tokens = await services.GetRequiredService<IOpenIddictTokenManager>().PruneAsync(threshold, cancellationToken);
+                authorizations = await services.GetRequiredService<IOpenIddictAuthorizationManager>().PruneAsync(threshold, cancellationToken);
+            }
+
+            // An interaction lives ten minutes; one an hour past its expiry is litter.
+            var cutoff = DateTime.UtcNow.AddHours(-1);
+            interactions = await services.GetRequiredService<ApplicationDbContext>().AuthorizationInteractions
+                .Where(i => i.ExpiresAt < cutoff)
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+        catch (Exception ex) when (authorizationServer.Tolerates(ex))
+        {
+            // No client is configured, and this database may predate the authorization server's
+            // tables (AuthorizationServerPosture): nothing to prune.
+            _logger.LogDebug(ex, "Skipped pruning the authorization server: it is off and its tables are unavailable");
+            return;
+        }
+
+        if (tokens + authorizations + interactions > 0)
+        {
+            _logger.LogInformation(
+                "Pruned {Tokens} token(s), {Authorizations} authorization(s) and {Interactions} interaction(s) from the authorization server",
+                tokens, authorizations, interactions);
         }
     }
 }
