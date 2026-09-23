@@ -82,14 +82,7 @@ public class AuthorizationController(
         // N4: the client authenticated before this ran, so the limit is its own, not its IP's.
         using var lease = _tokenLimiter.Acquire(request.ClientId!);
         if (!lease.IsAcquired)
-        {
-            var retryAfter = lease.TryGetMetadata(MetadataName.RetryAfter, out var value) ? (double?)value.TotalSeconds : null;
-            return StatusCode(StatusCodes.Status429TooManyRequests, new
-            {
-                error = "Too many requests. Please try again later.",
-                retryAfter
-            });
-        }
+            return RateLimited(lease);
 
         if (!request.IsAuthorizationCodeGrantType() && !request.IsRefreshTokenGrantType())
             throw new InvalidOperationException("The library admits only the authorization code and refresh token grants.");
@@ -99,15 +92,36 @@ public class AuthorizationController(
         var principal = (await HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal
             ?? throw new InvalidOperationException("The validated grant could not be retrieved.");
 
+        // I18: all of a client's users share its budget, so each may spend only a share of it.
+        var subject = principal.GetClaim(Claims.Subject)!;
+        using var userLease = _tokenLimiter.AcquireForUser(request.ClientId!, subject);
+        if (!userLease.IsAcquired)
+            return RateLimited(userLease);
+
         // RFC 8707: a resource named here must be the one the grant was issued for.
         var granted = principal.GetResources();
         if (request.GetResources().Any(r => !granted.Any(g => SameResource(g, r))))
             return ForbidWith(Errors.InvalidTarget, "The resource was not granted to this authorization.");
 
+        // I19: configuration is authoritative for what a client may hold (A8), so a grant made
+        // before a scope or resource was withdrawn narrows to what is still allowed. A grant for a
+        // withdrawn resource ends; a withdrawn scope is left out of the next token.
+        var client = _options.Value.FindClient(request.ClientId);
+        var allowedResources = client?.AllowedResources.SelectMany(AuthorizationClientSync.ResourceForms).ToHashSet(StringComparer.Ordinal) ?? [];
+        if (client is null || !granted.All(allowedResources.Contains))
+        {
+            if (principal.GetAuthorizationId() is { } withdrawnAuthorization)
+                await _tokens.RevokeByAuthorizationIdAsync(withdrawnAuthorization);
+
+            return ForbidWith(Errors.InvalidGrant, "The grant is for a resource this client may no longer use.");
+        }
+
+        var scopes = principal.GetScopes().Intersect(client.AllowedScopes, StringComparer.Ordinal).ToImmutableArray();
+
         // A10: every exchange re-checks the account and rebuilds the claims from its current
         // state, so a role or membership change reaches the next token, and a deleted or
         // locked-out account gets no more — as the existing refresh does.
-        var user = await _userManager.FindByIdAsync(principal.GetClaim(Claims.Subject)!);
+        var user = await _userManager.FindByIdAsync(subject);
         if (user is null || user.IsDeleted || await _userManager.IsLockedOutAsync(user))
         {
             if (principal.GetAuthorizationId() is { } authorizationId)
@@ -116,10 +130,20 @@ public class AuthorizationController(
             return ForbidWith(Errors.InvalidGrant, "The account is no longer allowed to sign in.");
         }
 
-        var identity = await CreateIdentityAsync(user, principal.GetScopes(), granted);
+        var identity = await CreateIdentityAsync(user, scopes, granted);
         identity.SetAuthorizationId(principal.GetAuthorizationId());
 
         return SignIn(new ClaimsPrincipal(identity), OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
+    }
+
+    private ObjectResult RateLimited(RateLimitLease lease)
+    {
+        var retryAfter = lease.TryGetMetadata(MetadataName.RetryAfter, out var value) ? (double?)value.TotalSeconds : null;
+        return StatusCode(StatusCodes.Status429TooManyRequests, new
+        {
+            error = "Too many requests. Please try again later.",
+            retryAfter
+        });
     }
 
     private async Task<IActionResult> AuthorizeHostedAsync(OpenIddictRequest request, string resource)
@@ -264,6 +288,10 @@ public class AuthorizationController(
         var user = interaction.UserId is null ? null : await _userManager.FindByIdAsync(interaction.UserId);
         if (user is null || await _signInFlow.CheckEligibilityAsync(user) != SignInIneligibility.None)
             return ForbidWith(Errors.AccessDenied, "The account cannot be used to authorize this client.");
+
+        // I16: a revocation between the decision and now would otherwise be outlived by the grant.
+        if (interaction.DecidedAt is not { } decidedAt || await _tokenService.SessionsRevokedSinceAsync(user.Id, decidedAt))
+            return ForbidWith(Errors.AccessDenied, "The account's sessions were ended after the request was approved.");
 
         var applicationId = await GetApplicationIdAsync(interaction.ClientId);
         var scopes = interaction.Scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToImmutableArray();

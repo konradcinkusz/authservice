@@ -34,6 +34,7 @@ public class AuthorizationInteractionController(
     IOptionsSnapshot<AuthorizationServerOptions> _options,
     UserManager<ApplicationUser> _userManager,
     SignInFlow _signInFlow,
+    ITokenService _tokenService,
     IAuditService _audit,
     AuthorizationServerIssuer _issuer
 ) : AuthControllerBase
@@ -97,6 +98,11 @@ public class AuthorizationInteractionController(
         var user = userId is null ? null : await _userManager.FindByIdAsync(userId);
         if (user is null)
             return Unauthorized();
+
+        // I16: the bearer token still authenticates after its session was revoked, until it
+        // expires, as every JWT does. It may not start a connection that outlives the revocation.
+        if (!await _tokenService.IsSessionAliveAsync(User))
+            return Unauthorized(new { error = "invalid_token", errorDescription = "This session has ended. Sign in again." });
 
         var interaction = await FindPendingAsync(handle);
         if (interaction is null)

@@ -18,6 +18,7 @@ public sealed class AuthorizationClientSync(
     IServiceScopeFactory scopeFactory,
     IOptionsMonitor<AuthorizationServerOptions> options,
     IMigrationCompletionSignal migrationSignal,
+    AuthorizationServerPosture posture,
     ILogger<AuthorizationClientSync> logger
 ) : BackgroundService
 {
@@ -28,6 +29,12 @@ public sealed class AuthorizationClientSync(
             // The client table arrives with the schema; see SERVICE-API-PATTERNS.md §7.
             await migrationSignal.WaitAsync(stoppingToken);
             await SyncAsync(stoppingToken);
+        }
+        catch (Exception ex) when (posture.Tolerates(ex))
+        {
+            // With no client configured the sync only clears out clients a previous release
+            // registered, and a database that predates the library's tables has none to clear.
+            logger.LogDebug(ex, "Skipped clearing the authorization server's clients: it is off and its tables are unavailable.");
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
         {

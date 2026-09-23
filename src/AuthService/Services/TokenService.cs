@@ -10,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 using AuthService.Models;
 using AuthService.DTOs;
 using AuthService.Data;
+using AuthService.Extensions;
 using OpenIddict.Abstractions;
 
 namespace AuthService.Services;
@@ -22,6 +23,7 @@ public class TokenService(
     IAuditService _audit,
     IOpenIddictAuthorizationManager _authorizationManager,
     IOpenIddictTokenManager _authorizationServerTokens,
+    AuthorizationServerPosture _authorizationServer,
     ILogger<TokenService> _logger
 ) : ITokenService
 {
@@ -95,6 +97,31 @@ public class TokenService(
         return await IssueAsync(user, storedToken.FamilyId, storedToken);
     }
 
+    public async Task<bool> IsSessionAliveAsync(ClaimsPrincipal accessToken)
+    {
+        var userId = accessToken.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (userId is null || !long.TryParse(accessToken.FindFirstValue(JwtRegisteredClaimNames.Exp), out var expires))
+            return false;
+
+        // The token carries no iat, but IssueAsync creates its refresh token in the same call,
+        // so that refresh token is the one created in the second the token's lifetime began.
+        var issuedAt = DateTimeOffset.FromUnixTimeSeconds(expires).UtcDateTime.AddMinutes(-AccessTokenMinutes);
+        var from = issuedAt.AddMilliseconds(-100);
+        var until = issuedAt.AddMilliseconds(1500);
+        var families = _context.RefreshTokens
+            .Where(rt => rt.UserId == userId && rt.CreatedAt >= from && rt.CreatedAt < until)
+            .Select(rt => rt.FamilyId);
+
+        // Rotation keeps a family alive; logout, a password change or reset, an admin revocation,
+        // deletion or a detected replay ends it.
+        var now = DateTime.UtcNow;
+        return await _context.RefreshTokens.AnyAsync(rt => families.Contains(rt.FamilyId) && !rt.IsRevoked && rt.ExpiresAt > now);
+    }
+
+    public Task<bool> SessionsRevokedSinceAsync(string userId, DateTime since) =>
+        _context.RefreshTokens.AnyAsync(rt =>
+            rt.UserId == userId && rt.IsRevoked && rt.RevokedAt >= since && rt.RevokedReason != RefreshTokenRevocationReason.Rotated);
+
     public async Task RevokeRefreshTokensAsync(string userId, string reason = RefreshTokenRevocationReason.Logout)
     {
         var tokens = await _context.RefreshTokens
@@ -119,8 +146,17 @@ public class TokenService(
         // operation across both stores, so no caller can end one kind of session and not the
         // other (IDENTITY-AND-ACCOUNTS.md §2; ADR 0005). Access tokens already issued run out
         // on their own, which is why MCP access tokens are short-lived.
-        await _authorizationManager.RevokeBySubjectAsync(userId);
-        await _authorizationServerTokens.RevokeBySubjectAsync(userId);
+        try
+        {
+            await _authorizationManager.RevokeBySubjectAsync(userId);
+            await _authorizationServerTokens.RevokeBySubjectAsync(userId);
+        }
+        catch (Exception ex) when (_authorizationServer.Tolerates(ex))
+        {
+            // No client is configured, and this database may predate the library's tables
+            // (AuthorizationServerPosture): there is nothing there to revoke.
+            _logger.LogDebug(ex, "Skipped revoking authorization-server grants for user {UserId}: the server is off and its tables are unavailable", userId);
+        }
     }
 
     public string GenerateTwoFactorChallengeToken(ApplicationUser user)

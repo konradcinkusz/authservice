@@ -73,6 +73,7 @@ public class UserCleanupService : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var tokenService = scope.ServiceProvider.GetRequiredService<ITokenService>();
+        var authorizationServer = scope.ServiceProvider.GetRequiredService<AuthorizationServerPosture>();
 
         var now = DateTime.UtcNow;
 
@@ -99,7 +100,16 @@ public class UserCleanupService : BackgroundService
 
                 // The authorization server keeps the user id as a plain subject string with no
                 // foreign key, so the cascade that clears RefreshTokens never reaches these rows.
-                await DeleteAuthorizationServerRowsAsync(scope.ServiceProvider, user.Id, cancellationToken);
+                try
+                {
+                    await DeleteAuthorizationServerRowsAsync(scope.ServiceProvider, user.Id, cancellationToken);
+                }
+                catch (Exception ex) when (authorizationServer.Tolerates(ex))
+                {
+                    // No client is configured, and this database may predate the library's
+                    // tables (AuthorizationServerPosture): nothing there to delete.
+                    _logger.LogDebug(ex, "Skipped deleting authorization-server rows for user {UserId}: the server is off and its tables are unavailable", user.Id);
+                }
 
                 var result = await userManager.DeleteAsync(user);
                 if (result.Succeeded)
@@ -147,16 +157,36 @@ public class UserCleanupService : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var services = scope.ServiceProvider;
+        var authorizationServer = services.GetRequiredService<AuthorizationServerPosture>();
 
-        var threshold = DateTimeOffset.UtcNow - AuthorizationServerRetention;
-        var tokens = await services.GetRequiredService<IOpenIddictTokenManager>().PruneAsync(threshold, cancellationToken);
-        var authorizations = await services.GetRequiredService<IOpenIddictAuthorizationManager>().PruneAsync(threshold, cancellationToken);
+        long tokens = 0, authorizations = 0;
+        int interactions;
+        try
+        {
+            // With no client configured, the client sync has already deleted every client along
+            // with its grants, so the library has nothing to prune. It is not asked to: a prune
+            // that fails is retried a thousand times over, which a database without its tables
+            // would pay every hour.
+            if (authorizationServer.Enabled)
+            {
+                var threshold = DateTimeOffset.UtcNow - AuthorizationServerRetention;
+                tokens = await services.GetRequiredService<IOpenIddictTokenManager>().PruneAsync(threshold, cancellationToken);
+                authorizations = await services.GetRequiredService<IOpenIddictAuthorizationManager>().PruneAsync(threshold, cancellationToken);
+            }
 
-        // An interaction lives ten minutes; one an hour past its expiry is litter.
-        var cutoff = DateTime.UtcNow.AddHours(-1);
-        var interactions = await services.GetRequiredService<ApplicationDbContext>().AuthorizationInteractions
-            .Where(i => i.ExpiresAt < cutoff)
-            .ExecuteDeleteAsync(cancellationToken);
+            // An interaction lives ten minutes; one an hour past its expiry is litter.
+            var cutoff = DateTime.UtcNow.AddHours(-1);
+            interactions = await services.GetRequiredService<ApplicationDbContext>().AuthorizationInteractions
+                .Where(i => i.ExpiresAt < cutoff)
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+        catch (Exception ex) when (authorizationServer.Tolerates(ex))
+        {
+            // No client is configured, and this database may predate the authorization server's
+            // tables (AuthorizationServerPosture): nothing to prune.
+            _logger.LogDebug(ex, "Skipped pruning the authorization server: it is off and its tables are unavailable");
+            return;
+        }
 
         if (tokens + authorizations + interactions > 0)
         {

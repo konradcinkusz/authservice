@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Security.Cryptography;
 using System.Threading.RateLimiting;
 using AuthService.Data;
@@ -59,9 +60,24 @@ public static class AuthorizationServerDefaults
     public static readonly TimeSpan SessionLifetime = TimeSpan.FromMinutes(20);
 }
 
-/// <summary>What the startup banner prints about the authorization server.</summary>
+/// <summary>
+/// The authorization server as it started, which the startup banner prints. Registered as a
+/// singleton, because the rest of the service asks one question of it: whether the library's
+/// tables can be relied on. They arrive with the <c>AddAuthorizationServer</c> migration, and
+/// a database <c>EnsureCreated</c> made before that release does not have them. With no client
+/// configured nothing depends on them, so revocation, deletion and pruning carry on when they
+/// are missing; with a client configured they are required, and a failure surfaces.
+/// </summary>
 public sealed record AuthorizationServerPosture(bool Enabled, int ClientCount, AuthorizationServerInteractionMode Mode, string? Issuer)
 {
+    /// <summary>
+    /// Whether a failure against the library's tables can be let go: the server is off, and the
+    /// failure is the database's. The library's pruning retries and then reports its failures
+    /// together, so an aggregate of database failures counts as one.
+    /// </summary>
+    public bool Tolerates(Exception exception) =>
+        !Enabled && (exception is DbException || exception is AggregateException { InnerExceptions: var inner } && inner.All(e => e is DbException));
+
     public override string ToString() => Enabled
         ? $"enabled ({ClientCount} client(s), {Mode} interaction, issuer {Issuer})"
         : "disabled (no client configured)";
@@ -95,7 +111,7 @@ public static class AuthorizationServerExtensions
         services.Configure<AuthorizationServerOptions>(section);
 
         var publicBaseUrl = builder.Configuration["Jwt:PublicBaseUrl"];
-        var errors = options.Validate(signingKeys.Algorithm, publicBaseUrl);
+        var errors = options.Validate(signingKeys.Algorithm, publicBaseUrl, builder.Configuration["Jwt:Issuer"], builder.Configuration["Jwt:Audience"]);
         if (errors.Count > 0)
         {
             throw new InvalidOperationException(
@@ -116,7 +132,11 @@ public static class AuthorizationServerExtensions
         services.Configure<MvcOptions>(mvc => mvc.Conventions.Add(new AuthorizationServerSurfaceConvention(options.IsEnabled)));
 
         if (!options.IsEnabled)
-            return new AuthorizationServerPosture(false, 0, options.Interaction.Mode, null);
+        {
+            var disabled = new AuthorizationServerPosture(false, 0, options.Interaction.Mode, null);
+            services.AddSingleton(disabled);
+            return disabled;
+        }
 
         AuthorizationServerOptions.TryNormalizeIssuer(publicBaseUrl, out var issuer);
         services.AddSingleton(new AuthorizationServerIssuer(issuer));
@@ -230,13 +250,21 @@ public static class AuthorizationServerExtensions
         // N4, F10: every Claude user's token calls come from Anthropic's small egress range, so
         // the global per-IP bucket would lump them together. The token endpoint is limited per
         // authenticated client instead, in the endpoint itself (AuthorizationServerTokenLimiter).
+        // It keeps a per-address limit of its own all the same (I17): authenticating a client
+        // costs a PBKDF2 derivation, so wrong secrets from one address must not arrive unbounded.
+        // An address may send as many requests as all clients together may make, which is more
+        // than legitimate traffic from anywhere can reach.
+        var perAddress = (int)Math.Min(int.MaxValue, options.Clients.Sum(c => (long)c.TokenRequestsPerMinute));
+        var clientIpHeader = builder.Configuration.GetSection(NetworkOptions.SectionName).Get<NetworkOptions>()?.ClientIpHeader;
         services.PostConfigure<RateLimiterOptions>(limiter =>
         {
             if (limiter.GlobalLimiter is { } global)
-                limiter.GlobalLimiter = new TokenEndpointExemptLimiter(global);
+                limiter.GlobalLimiter = new TokenEndpointLimiter(global, perAddress, clientIpHeader);
         });
 
-        return new AuthorizationServerPosture(true, options.Clients.Count, options.Interaction.Mode, issuer);
+        var enabled = new AuthorizationServerPosture(true, options.Clients.Count, options.Interaction.Mode, issuer);
+        services.AddSingleton(enabled);
+        return enabled;
     }
 
     /// <summary>Maps the RFC 8414 metadata and the pages, when the authorization server is enabled.</summary>
@@ -374,50 +402,72 @@ internal sealed class AuthorizationServerPageHeaders : IAsyncPageFilter
 }
 
 /// <summary>
-/// The token endpoint's limit, partitioned by the client the library has just authenticated
-/// (N4) — which is why it is applied in the endpoint rather than by the rate-limiting
-/// middleware, which runs before authentication. Rejections are not queued.
+/// The token endpoint's limits, partitioned by the client the library has just authenticated
+/// (N4), and within it by the user the grant belongs to (I18) — which is why they are applied in
+/// the endpoint rather than by the rate-limiting middleware, which runs before authentication.
+/// Rejections are not queued.
 /// </summary>
 public sealed class AuthorizationServerTokenLimiter : IDisposable
 {
-    private readonly PartitionedRateLimiter<string> _limiter;
+    private readonly PartitionedRateLimiter<string> _perClient;
+    private readonly PartitionedRateLimiter<(string ClientId, string Subject)> _perUser;
 
     public AuthorizationServerTokenLimiter(IOptions<AuthorizationServerOptions> options)
     {
-        var limits = options.Value.Clients.ToDictionary(c => c.ClientId, c => c.TokenRequestsPerMinute, StringComparer.Ordinal);
+        var clients = options.Value.Clients.ToDictionary(c => c.ClientId, StringComparer.Ordinal);
 
-        _limiter = PartitionedRateLimiter.Create<string, string>(clientId =>
-            RateLimitPartition.GetFixedWindowLimiter(clientId, id => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = limits.GetValueOrDefault(id, 1),
-                Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0
-            }));
+        _perClient = PartitionedRateLimiter.Create<string, string>(clientId =>
+            RateLimitPartition.GetFixedWindowLimiter(clientId, id => PerMinute(clients.GetValueOrDefault(id)?.TokenRequestsPerMinute)));
+
+        _perUser = PartitionedRateLimiter.Create<(string ClientId, string Subject), (string, string)>(key =>
+            RateLimitPartition.GetFixedWindowLimiter(key, k => PerMinute(clients.GetValueOrDefault(k.Item1)?.TokenRequestsPerUserPerMinute)));
     }
 
-    public RateLimitLease Acquire(string clientId) => _limiter.AttemptAcquire(clientId);
+    public RateLimitLease Acquire(string clientId) => _perClient.AttemptAcquire(clientId);
 
-    public void Dispose() => _limiter.Dispose();
+    public RateLimitLease AcquireForUser(string clientId, string subject) => _perUser.AttemptAcquire((clientId, subject));
+
+    public void Dispose()
+    {
+        _perClient.Dispose();
+        _perUser.Dispose();
+    }
+
+    private static FixedWindowRateLimiterOptions PerMinute(int? permits) => new()
+    {
+        PermitLimit = permits ?? 1,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0
+    };
 }
 
-/// <summary>The global limiter, with the token endpoint taken out of it (N4).</summary>
-internal sealed class TokenEndpointExemptLimiter(PartitionedRateLimiter<HttpContext> inner) : PartitionedRateLimiter<HttpContext>
+/// <summary>
+/// The global limiter, with the token endpoint taken out of its shared per-address bucket (N4)
+/// and given a per-address limit of its own, applied before the client authenticates (I17).
+/// </summary>
+internal sealed class TokenEndpointLimiter(PartitionedRateLimiter<HttpContext> inner, int permitsPerAddress, string? clientIpHeader)
+    : PartitionedRateLimiter<HttpContext>
 {
-    private readonly PartitionedRateLimiter<HttpContext> _exempt =
-        PartitionedRateLimiter.Create<HttpContext, string>(_ => RateLimitPartition.GetNoLimiter("authorization-server-token"));
+    private readonly PartitionedRateLimiter<HttpContext> _tokenEndpoint = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        RateLimitPartition.GetFixedWindowLimiter(context.ResolveClientIp(clientIpHeader), _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = permitsPerAddress,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0
+        }));
 
-    private static bool IsExempt(HttpContext context) =>
+    private static bool IsTokenEndpoint(HttpContext context) =>
         context.Request.Path.Equals(AuthorizationServerDefaults.TokenEndpoint, StringComparison.OrdinalIgnoreCase);
 
     public override RateLimiterStatistics? GetStatistics(HttpContext resource) =>
-        IsExempt(resource) ? _exempt.GetStatistics(resource) : inner.GetStatistics(resource);
+        IsTokenEndpoint(resource) ? _tokenEndpoint.GetStatistics(resource) : inner.GetStatistics(resource);
 
     protected override RateLimitLease AttemptAcquireCore(HttpContext resource, int permitCount) =>
-        IsExempt(resource) ? _exempt.AttemptAcquire(resource, permitCount) : inner.AttemptAcquire(resource, permitCount);
+        IsTokenEndpoint(resource) ? _tokenEndpoint.AttemptAcquire(resource, permitCount) : inner.AttemptAcquire(resource, permitCount);
 
     protected override ValueTask<RateLimitLease> AcquireAsyncCore(HttpContext resource, int permitCount, CancellationToken cancellationToken) =>
-        IsExempt(resource)
-            ? _exempt.AcquireAsync(resource, permitCount, cancellationToken)
+        IsTokenEndpoint(resource)
+            ? _tokenEndpoint.AcquireAsync(resource, permitCount, cancellationToken)
             : inner.AcquireAsync(resource, permitCount, cancellationToken);
 
     protected override void Dispose(bool disposing)
@@ -425,14 +475,14 @@ internal sealed class TokenEndpointExemptLimiter(PartitionedRateLimiter<HttpCont
         if (disposing)
         {
             inner.Dispose();
-            _exempt.Dispose();
+            _tokenEndpoint.Dispose();
         }
     }
 
     protected override async ValueTask DisposeAsyncCore()
     {
         await inner.DisposeAsync();
-        await _exempt.DisposeAsync();
+        await _tokenEndpoint.DisposeAsync();
     }
 }
 

@@ -1,8 +1,15 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AuthService.AuthorizationServer.Tests.Infrastructure;
+using AuthService.Data;
+using AuthService.Models;
+using AuthService.Services;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using Xunit;
 
@@ -181,5 +188,47 @@ public class DisabledAuthorizationServerTests : IAsyncLifetime
         using var logout = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/logout").WithBearer(tokens.AccessToken);
 
         Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(logout)).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_database_without_the_authorization_servers_tables_still_signs_out_and_deletes_accounts()
+    {
+        // A database EnsureCreated made before this release has none of these tables, and
+        // nothing requires them while no client is configured (AuthorizationServerPosture).
+        await _factory.WithScopeAsync(services => services.GetRequiredService<ApplicationDbContext>().Database.ExecuteSqlRawAsync(
+            "DROP TABLE OpenIddictTokens; DROP TABLE OpenIddictAuthorizations; DROP TABLE OpenIddictScopes; " +
+            "DROP TABLE OpenIddictApplications; DROP TABLE AuthorizationInteractions;"));
+        var (email, tokens) = await _client.RegisterAsync();
+
+        using var logout = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/logout").WithBearer(tokens.AccessToken);
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(logout)).StatusCode);
+
+        using var change = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/change-password")
+        {
+            Content = JsonContent.Create(new { currentPassword = TestAccounts.Password, newPassword = "N3w-Passw0rd!" })
+        };
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(change.WithBearer(tokens.AccessToken))).StatusCode);
+
+        using var delete = new HttpRequestMessage(HttpMethod.Delete, "/api/v1/auth/account")
+        {
+            Content = JsonContent.Create(new { password = "N3w-Passw0rd!", confirmation = "DELETE" })
+        };
+        Assert.Equal(HttpStatusCode.OK, (await _client.SendAsync(delete.WithBearer(tokens.AccessToken))).StatusCode);
+
+        // The reaper's permanent deletion and its pruning, run directly rather than hourly.
+        await _factory.WithScopeAsync(async services =>
+        {
+            var users = services.GetRequiredService<UserManager<ApplicationUser>>();
+            var user = await users.FindByEmailAsync(email);
+            Assert.True(user!.IsDeleted);
+            user.ScheduledPermanentDeletionAt = DateTime.UtcNow.AddMinutes(-1);
+            await users.UpdateAsync(user);
+        });
+        var cleanup = ActivatorUtilities.CreateInstance<UserCleanupService>(_factory.Services);
+        await cleanup.CleanupExpiredUsersAsync(CancellationToken.None);
+        await cleanup.PruneAuthorizationServerAsync(CancellationToken.None);
+
+        await _factory.WithScopeAsync(async services =>
+            Assert.Null(await services.GetRequiredService<UserManager<ApplicationUser>>().FindByEmailAsync(email)));
     }
 }

@@ -87,6 +87,49 @@ public class ExternalInteractionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task An_access_token_whose_session_was_revoked_cannot_approve_a_connection()
+    {
+        // I16: the token outlives its session's revocation, as every JWT does, but must not mint
+        // a grant that would outlive the revocation too.
+        var (email, api) = await _flow.Backchannel.RegisterAsync();
+        var handle = await StartAsync(_flow.Browser, Pkce.Create(), "revoked");
+        await LogoutAsync(api.AccessToken);
+
+        var refused = await DecideAsync(api.AccessToken, handle, "accept");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+
+        // Signing in again starts a session that can.
+        var fresh = await _flow.Backchannel.LoginAsync(email);
+        var redirectTo = await AcceptAsync(fresh.AccessToken, handle);
+        Assert.True(AuthorizationFlowClient.Query((await _flow.Browser.GetAsync(redirectTo)).Headers.Location!).ContainsKey("code"));
+    }
+
+    [Fact]
+    public async Task A_refreshed_session_can_still_approve_a_connection()
+    {
+        // Rotation keeps a session alive: both the token from before the refresh and the one
+        // from after it belong to a session whose refresh token is live.
+        var (_, api) = await _flow.Backchannel.RegisterAsync();
+        var refresh = await _flow.Backchannel.PostAsJsonAsync("/api/v1/auth/refresh", new { refreshToken = api.RefreshToken });
+        refresh.EnsureSuccessStatusCode();
+        var rotated = (await refresh.Content.ReadFromJsonAsync<ApiTokens>(TestAccounts.Json))!;
+
+        await AcceptAsync(api.AccessToken, await StartAsync(_flow.Browser, Pkce.Create(), "before-refresh"));
+        await AcceptAsync(rotated.AccessToken, await StartAsync(_flow.Browser, Pkce.Create(), "after-refresh"));
+    }
+
+    [Fact]
+    public async Task An_approval_does_not_complete_once_the_users_sessions_are_revoked()
+    {
+        var (_, api) = await _flow.Backchannel.RegisterAsync();
+        var redirectTo = await AcceptAsync(api.AccessToken, await StartAsync(_flow.Browser, Pkce.Create(), "late"));
+        await LogoutAsync(api.AccessToken);
+
+        AssertDenied(await _flow.Browser.GetAsync(redirectTo));
+    }
+
+    [Fact]
     public async Task A_replayed_ticket_is_refused()
     {
         var (_, api) = await _flow.Backchannel.RegisterAsync();
@@ -267,6 +310,12 @@ public class ExternalInteractionTests : IAsyncLifetime
         var response = await DecideAsync(accessToken, handle, "accept");
         Assert.True(response.StatusCode == HttpStatusCode.OK, await AuthorizationFlowClient.DescribeAsync(response));
         return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("redirectTo").GetString()!;
+    }
+
+    private async Task LogoutAsync(string accessToken)
+    {
+        using var logout = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/logout").WithBearer(accessToken);
+        Assert.Equal(HttpStatusCode.OK, (await _flow.Backchannel.SendAsync(logout)).StatusCode);
     }
 
     private static void AssertDenied(HttpResponseMessage response)

@@ -76,7 +76,8 @@ public class AuthorizationServerOptions
     /// failure naming the setting rather than a failed connection somewhere in Claude
     /// (the posture ADR 0002 set for key material). Returns every problem at once.
     /// </summary>
-    public IReadOnlyList<string> Validate(JwtSigningAlgorithm signingAlgorithm, string? publicBaseUrl)
+    public IReadOnlyList<string> Validate(
+        JwtSigningAlgorithm signingAlgorithm, string? publicBaseUrl, string? apiIssuer = null, string? apiAudience = null)
     {
         var errors = new List<string>();
         if (!IsEnabled)
@@ -89,7 +90,7 @@ public class AuthorizationServerOptions
                 "without being able to mint them. Set Jwt:Algorithm=RS256 and Jwt:PrivateKeyPem (ADR 0002).");
         }
 
-        if (!TryNormalizeIssuer(publicBaseUrl, out _))
+        if (!TryNormalizeIssuer(publicBaseUrl, out var issuer))
         {
             errors.Add(
                 "Jwt:PublicBaseUrl must be set to this service's public https origin (for example " +
@@ -185,12 +186,26 @@ public class AuthorizationServerOptions
 
             if (client.TokenRequestsPerMinute < 1)
                 errors.Add($"{prefix}:TokenRequestsPerMinute must be at least 1.");
+            if (client.TokenRequestsPerUserPerMinute < 1)
+                errors.Add($"{prefix}:TokenRequestsPerUserPerMinute must be at least 1.");
         }
 
         for (var i = 0; i < Scopes.Count; i++)
         {
             if (string.IsNullOrWhiteSpace(Scopes[i].Name))
                 errors.Add($"AuthorizationServer:Scopes:{i}:Name is required.");
+        }
+
+        // MCP tokens are kept out of authservice's own API by their issuer and audience (A1, A9).
+        // Were both the ones the API validates, it would take an MCP token for its own (I20).
+        // Checked last, once the issuer and every resource are known to be well formed.
+        if (errors.Count == 0 &&
+            string.Equals(apiIssuer?.Trim().TrimEnd('/'), issuer, StringComparison.Ordinal) &&
+            Clients.Any(c => c.AllowedResources.SelectMany(AuthorizationClientSync.ResourceForms).Contains(apiAudience, StringComparer.Ordinal)))
+        {
+            errors.Add(
+                "Jwt:Issuer is Jwt:PublicBaseUrl and Jwt:Audience is one of AuthorizationServer:Clients' AllowedResources, " +
+                "so authservice's own API would accept MCP tokens as its own. Change Jwt:Issuer or Jwt:Audience.");
         }
 
         return errors;
@@ -274,6 +289,13 @@ public class AuthorizationServerClient
     /// bucket would lump them together; size this to the client's users instead.
     /// </summary>
     public int TokenRequestsPerMinute { get; set; } = 1200;
+
+    /// <summary>
+    /// One user's share of <see cref="TokenRequestsPerMinute"/>, so that a user who holds the
+    /// client's secret, as Claude's individual plans require, cannot spend the budget every other
+    /// user of the client depends on (I18). A connection refreshes a few times an hour.
+    /// </summary>
+    public int TokenRequestsPerUserPerMinute { get; set; } = 30;
 }
 
 public class AuthorizationServerScope
