@@ -1,6 +1,6 @@
 # AUTH-MCP-01: ticket analysis
 
-> **Revision 3**, 2026-09-23. Records Konrad's re-decision of the gate. Revision 2 landed his answers to B1–B3 (§5.1); revision 1 was the first pass of `/ticket-analysis`.
+> **Revision 4**, 2026-09-23. Lands the implementation phase's findings (§5.4), made reading the library and the code before any production change. None changes scope, so the gate stands without a re-decision. Revision 3 recorded Konrad's re-decision of the gate; revision 2 landed his answers to B1–B3 (§5.1); revision 1 was the first pass of `/ticket-analysis`.
 > **Gate: decided, go.** All four conditions are met (§7), and Konrad re-decided the gate after revision 2's scope change: "Go: prompt + implement (Recommended)", 2026-09-23.
 > **Ticket:** the AUTH-MCP-01 brief, "authservice as an OAuth 2.1 authorization server for MCP connectors", as pasted into the session on 2026-09-23. Appendix A holds its acceptance criteria verbatim. If the tracker id changes, this file keeps its name until it is renamed.
 > **Downstream:** `AP-MCP-01` (AureliusPromptus MCP connector) is blocked on this ticket.
@@ -119,7 +119,7 @@ These are part of the table and travel with it into the master prompt.
 *Both modes*
 - PKCE is required, and `plain` is removed from the library's code-challenge methods. By default the library enables `plain` and doesn't require PKCE (`OpenIddictServerOptions.cs` L494–498, L533).
 - Exactly one `resource` is required, and it must be in the client's allowed list (N10).
-- `redirect_uri` must match a configured value exactly. Errors found before `redirect_uri` is validated are shown on an authservice page and never redirected (`MCP-SEC` "Open Redirection"). That error page is the only page External mode renders.
+- `redirect_uri` must match a configured value exactly. Errors found before `redirect_uri` is validated are shown on an authservice page and never redirected (`MCP-SEC` "Open Redirection"). That error page is the only page External mode renders. *(Revision 4.)* It is the library's own local error response, which it returns instead of redirecting for exactly these errors, so no page file is added for it.
 - Every authorization response carries `iss` (F2).
 - The mode comes from `AuthorizationServer:Interaction:Mode`: `Hosted`, the default, or `External` (A11).
 
@@ -135,6 +135,7 @@ These are part of the table and travel with it into the master prompt.
   2. The landing page redeems the code server-side through `IOAuthExchangeCodeService` and applies the second factor.
   3. It then resumes the authorization request.
   - The issuer's origin must be listed in `OAuth:PostLoginRedirectAllowedBaseUrls` (runbook).
+  - *(Revision 4.)* The round trip is bound to the browser that started it: the sign-in page puts a CSPRNG nonce in the `returnUrl` it hands `ExternalAuthController` (which keeps any query on an allowed path) and the same nonce in an HttpOnly cookie, and the landing page refuses a code whose nonce does not match. Without it, a link carrying the attacker's own exchange code signs the victim's pending request in as the attacker: the login-CSRF scenario External mode's binding cookie answers (SECURITY-REVIEW.md §8).
 - Consent shows the client's display name, the host of the redirect URI, and each scope's configured description (N2).
 - The pages send the header set from SECURITY-REVIEW.md §4, with `frame-ancestors 'none'` so consent can't be clickjacked.
 - Legal consent and account state are handled as in N6 and N7.
@@ -177,9 +178,12 @@ These are part of the table and travel with it into the master prompt.
   | `AuthorizationServer:Clients:0:ClientId`, `…:DisplayName` | client identity |
   | `…:ClientSecret` | platform secret only, set as `AuthorizationServer__Clients__0__ClientSecret` |
   | `…:RedirectUris:0`, `…:AllowedScopes:0`, `…:AllowedResources:0` | per-client lists |
-  | `AuthorizationServer:Scopes:<name>` | the consent description for that scope |
+  | `AuthorizationServer:Scopes:<n>:Name`, `…:Description` | the consent description for each scope. *(Revision 4: a list, not `Scopes:<name>`. `:` is the configuration key delimiter, so a scope named `notes:read`, the form N1 recommends, cannot be a key.)* |
   | `AuthorizationServer:EncryptionKey` | platform secret (A4) |
-  | lifetimes | N1 |
+  | `AuthorizationServer:PreviousEncryptionKeys:<n>` | platform secret, decryption only, for a rolling rotation (A4) |
+  | `AuthorizationServer:AuthorizationCodeLifetimeSeconds`, `…:AccessTokenLifetimeMinutes`, `…:RefreshTokenLifetimeDays` | lifetimes (N1) |
+  | `…:Clients:0:TokenRequestsPerMinute` | that client's token-endpoint limit (N4) |
+  | `AuthorizationServer:Interaction:Mode`, `…:ExternalUrl` | the interaction mode (A11) |
 
 - Startup validation fails with a message naming the setting (the ADR 0002 posture) unless all of these hold:
   - the secret is present and at least 256 bits;
@@ -239,7 +243,7 @@ These are part of the table and travel with it into the master prompt.
   - an expired interaction;
   - a different user accepting;
   - the frontend trying to add a scope.
-- The mode is read through options at request time, so the External-mode host in the new test project sets it with `ConfigureAppConfiguration` rather than an environment variable (N14).
+- The mode is read through options at request time (A11). *(Revision 4.)* The new project's hosts take every setting through `UseSetting`, which Program.cs sees during its top-level configuration reads, so each host has its own keys, clients and mode with nothing process-wide; `ConfigureAppConfiguration` is not needed (N14).
 - No sleeps. Clock-dependent cases use the library's `TimeProvider` (TESTING-STRATEGY.md §6).
 
 **AC9**
@@ -472,8 +476,10 @@ OpenIddict 7.7.1, read in source.
 | Lifetimes: code 5 min, access token 1 h, refresh token 14 days | `OpenIddictServerOptions.cs` L245, L252, L296 | Q2 | Set them explicitly (N1) |
 | A refresh token is issued only when `offline_access` is granted | `OpenIddictServerHandlers.cs` L3460 | AC3, whenever Claude doesn't ask for it | Advertise and allow `offline_access` (F5) |
 | Startup requires an encryption key and an asymmetric signing key, and the error text suggests `AddEphemeral…` or `AddDevelopment…` | `OpenIddictServerConfiguration.cs` L250–257; `ID0085`/`ID0086` in `OpenIddictResources.resx` | P5 and IDENTITY-AND-ACCOUNTS.md §10: an ephemeral key dies at every restart, and a scaled-to-zero machine restarts often | Use the existing RS256 key and a durable encryption key (A3, A4) |
-| Logged request payloads redact codes, tokens and secrets, but not `code_verifier` | `OpenIddictMessage.cs` L411–422 | Brief §7: no secrets in logs | Raise the library's log level, and add a log-capture test (N5) |
-| `resource` is compared ordinally against each registered resource's `Uri.AbsoluteUri` | `OpenIddictServerHandlers.Authentication.cs` L1548, L3601 | AC2, for an MCP server at an origin root | Test both forms (N10) |
+| Logged request payloads redact codes, tokens and secrets, but not `code_verifier`; and the token generator logs every token it creates, in full, at Trace | `OpenIddictMessage.cs` L411–422; `OpenIddictServerHandlers.Protection.cs` L1771 *(revision 4)* | Brief §7: no secrets in logs | Raise the library's log level, and add a log-capture test (N5). *(Revision 4.)* The cap is applied in code to every `OpenIddict` category, so no configuration can lower it |
+| `resource` is compared ordinally against each registered resource's `Uri.AbsoluteUri` | `OpenIddictServerHandlers.Authentication.cs` L1548, L3601 | AC2, for an MCP server at an origin root | Test both forms (N10). *(Revision 4.)* `AbsoluteUri` always ends an origin in `/`, so the registry can never match the form Claude sends. The registry check is turned off; each client's resource permissions carry both forms of an origin-root resource (`…Authentication.cs` L1885 compares the permission string), and the passthrough requires exactly one resource |
+| *(Revision 4.)* Signing credentials are sorted with symmetric keys first, and every token but an identity token is signed with the first one | `OpenIddictServerConfiguration.cs` L545, L572; `OpenIddictServerHandlers.Protection.cs` L1485 | A3 and P5, were a symmetric key ever registered: access tokens would be HS256. F8: a retired key must validate without becoming the signing key | Register only `JwtSigningKeys.SigningKey`, then each retired public key after it (order among RSA keys is kept), and fail startup unless the first signing credential is the current key |
+| *(Revision 4.)* The issuer is written as `Uri.AbsoluteUri`, which ends an origin in `/`; the configuration endpoint's document also carries OIDC fields (claims, identity-token algorithms, subject types, prompt values) | `OpenIddictServerHandlers.cs` L3711–3717; `…Discovery.cs` L230; `…Authentication.cs` L2246 | A1 (trailing slash trimmed), and `MCP-DISC`'s identical-issuer rule for a protected-resource document that lists the origin | The library's configuration endpoint is off entirely. authservice serves the RFC 8414 document from the AS options, and two event handlers write A1's form into the authorization response's `iss` and the access token's `iss`. The library's own validation accepts both forms (`…Protection.cs` L191–202) |
 
 Defaults the library gets right, which should stay:
 - `iss` in authorization responses, and its metadata flag (`OpenIddictServerHandlers.Discovery.cs` L859).
@@ -492,6 +498,9 @@ None of these is in scope; they are recorded so they aren't lost.
 - `tutorial.md` is stale regardless of this ticket: its instructions are HS256-only, it describes tokens in the redirect URL, and it advises editing `EnsureCreated`.
 - Actual size: 7,818 lines of C# under `src/`, 6,611 of them in `AuthService`. ADR 0003 says about 5,000 and ADR 0004 about 7,400.
 - `CONTRIBUTING.md` says CI builds with `-warnaserror`; `ci.yml` does not.
+- *(Revision 4.)* The 403 branch in `AuthController.Login` (L247–254) cannot be reached while one setting drives both switches: with confirmation enforced, Identity's pre-sign-in check refuses an unconfirmed account before the password is checked, and the caller gets the generic 401 (`SignInCharacterizationTests` pins it). `SignInFlow` keeps the behaviour, and N6's citation now points here.
+- *(Revision 4.)* A failed external sign-in started from the AS sign-in page ends on the product frontend's login page, because `ExternalAuthController` sends failures to `OAuth:ErrorRedirectBaseUrl` and stays unchanged by design. The runbook says so.
+- *(Revision 4.)* With the legacy `Auth:AllowTokensInOAuthRedirect` on, the callback carries tokens rather than a code, so the AS pages cannot resume an external sign-in. They refuse it with a message rather than accept tokens in their own URL.
 - Names already taken, to avoid colliding with:
   - `OAuth:*` (the Google and GitHub settings);
   - `UserConsent` and `ConsentType` (legal consent);
@@ -569,7 +578,7 @@ Each assumption goes into the pull request (TICKET-ANALYSIS §5).
 | N3 | Refresh-token reuse leeway | 0 (IDENTITY-AND-ACCOUNTS.md §2 "single-use"). The risk: Claude's concurrent refreshes (reactive plus proactive) could trip replay detection and revoke the chain, forcing a reconnect. Watch the reuse audit event, and revisit through `/ticket-feedback` with evidence |
 | N4 | Rate-limit partitions | The authorize endpoint and sign-in pages use the `auth` policy, per IP, because the callers are browsers. The token endpoint is partitioned by the authenticated `client_id`, with a limit sized to that client's users, and rejections are not queued (SERVICE-API-PATTERNS.md §1). It is kept out of the global per-IP bucket (`Program.cs` L354–364), because all Claude calls come from one range (F10) |
 | N5 | What "traced" means (brief §7) | Audit events (new `AuditAction` constants for consent granted or denied, client revoked, and refresh reuse) plus structured logs. No code, token, secret or verifier is logged: the library's request logging runs at Warning in production (§4.5), and a log-capture test enforces it. OTLP stays an open row in `DEVIATIONS.md` (L16) |
-| N6 | A user whose accepted legal-consent versions are stale (IDENTITY-AND-ACCOUNTS.md §9) | The AS sign-in refuses, with an instruction to accept the new versions in the product. authservice gets no terms UI. Unconfirmed emails are refused as they are today (`AuthController.cs` L247–254) |
+| N6 | A user whose accepted legal-consent versions are stale (IDENTITY-AND-ACCOUNTS.md §9) | The AS sign-in refuses, with an instruction to accept the new versions in the product. authservice gets no terms UI. Unconfirmed emails are refused as they are today, by Identity's pre-sign-in check, with the generic failure (§4.6, revision 4) |
 | N7 | Registration and password reset on the AS pages | Neither is offered; the pages link to the product (`FrontendBaseUrl`) |
 | N8 | Claude's redirect URI | `https://claude.ai/api/mcp/auth_callback` (`CLAUDE-AUTH`). `https://claude.com/api/mcp/auth_callback` may be added. It appears only in a search excerpt of the retired article (§0), and the current page lists only claude.ai. It lives in configuration, not code (AC5) |
 | N9 | Token-endpoint client authentication | Accept both `client_secret_basic` and `client_secret_post`; Anthropic's pages don't say which Claude uses. Don't advertise `none`, so Claude never attempts CIMD (`CLAUDE-AUTH` "DCR and CIMD details") |
@@ -577,7 +586,7 @@ Each assumption goes into the pull request (TICKET-ANALYSIS §5).
 | N11 | MCP authorizations in the GDPR export | Not included: it isn't asked for. Flag it in the PR |
 | N12 | Listing connected clients | Not built: AC6 asks only for revocation |
 | N13 | Permanent deletion | Deletes the user's library rows, which have no foreign key. The existing hourly reaper loop prunes expired and revoked rows (IDENTITY-AND-ACCOUNTS.md §8) |
-| N14 | A second test project | The existing host's process-wide environment configuration (`AuthServiceFactory.cs` L35–62), combined with parallel test classes, rules out a second key configuration in the same process. A separate project runs in its own process, and adding it to `AuthService.sln` means CI runs it (TESTING-STRATEGY.md §9). This departs slightly from P13's "one project per service" wording, and is recorded here for that reason |
+| N14 | A second test project | The existing host's process-wide environment configuration (`AuthServiceFactory.cs` L35–62), combined with parallel test classes, rules out a second key configuration in the same process. A separate project runs in its own process, and adding it to `AuthService.sln` means CI runs it (TESTING-STRATEGY.md §9). This departs slightly from P13's "one project per service" wording, and is recorded here for that reason. *(Revision 4.)* The new project configures its hosts through `UseSetting` rather than environment variables, so it has no process-wide state of its own (AC8 notes) |
 
 ### 5.3 The brief's own questions
 
@@ -588,6 +597,22 @@ Each assumption goes into the pull request (TICKET-ANALYSIS §5).
 | ~~Q3: Does the library's storage fit authservice's persistence and migration approach?~~ | Answered by this analysis from the code and the library source. The library's EF Core stores live in `ApplicationDbContext` (P3), are portable across providers, and are applied by migrations (P4), once B1 supplies a migration set. They must be mapped in `OnModelCreating` (AC3 notes) |
 | ~~Q4: Which discovery document does Claude request?~~ | Answered from `CLAUDE-TS`: RFC 8414 first, then OIDC discovery as a fallback, and one is enough. → A2 |
 | Q5: What is the public issuer URL in each environment? | **Proposed → A1.** The issuer is `Jwt:PublicBaseUrl`, and its per-environment value is the deploying system's configuration (ADR 0001; SHARED-SERVICE-REUSE.md §4). Open until confirmed |
+
+### 5.4 Findings from the implementation phase (revision 4)
+
+Landed through `/ticket-feedback` (FEEDBACK.md): facts about the library and the code that the implementation phase found before any production change, stated as they were found. Each is a correction or new information, not a scope change, so no condition in §7 needs a person's re-decision.
+
+| # | Finding, as found | Kind | Lands in |
+|---|---|---|---|
+| I1 | "`AuthorizationServer:Scopes:<name>` cannot hold a scope named `notes:read`: `:` is the configuration key delimiter, so the name splits into nested sections and the description is lost." | Correction | AC5 notes' configuration table |
+| I2 | "OpenIddict writes the issuer as `Uri.AbsoluteUri`, so an origin becomes `https://auth.example.com/` in the metadata, the authorization response and the token, where A1 trims the slash." | New information | §4.5; A1 stands, and is kept by serving the metadata from authservice and rewriting `iss` in two event handlers |
+| I3 | "OpenIddict sorts signing credentials symmetric-first and signs with the first; a retired RSA key registered for validation has to come after the current one." | New information | §4.5; A3 and F8 stand |
+| I4 | "The resource registry compares against `AbsoluteUri`, which can never equal an origin-root resource without its slash." | Correction to §4.5's override for that row | §4.5; N10 stands |
+| I5 | "The token generator logs every token it creates, in full, at Trace." | New information | §4.5; N5 stands, with the cap enforced in code |
+| I6 | "An external sign-in started from a Hosted page can be finished by a link carrying someone else's exchange code, unless the round trip is bound to the browser." | New information | AC2 notes (Hosted) |
+| I7 | "`WebApplicationFactory`'s `UseSetting` reaches Program.cs's top-level configuration reads on .NET 10, so the new test project needs no environment variables at all." | Correction | AC8 notes, N14 |
+| I8 | "The 403 unverified-email branch of `AuthController.Login` is unreachable: Identity refuses the account first, with the generic 401." | New information | §4.6, N6 |
+| I9 | "Failed external sign-ins end on the product frontend, and the legacy tokens-in-redirect switch leaves the AS pages nothing to resume from." | New information | §4.6; the runbook |
 
 ---
 
@@ -641,7 +666,7 @@ None yet. An accepted risk names the person who accepted it (TICKET-ANALYSIS §6
 
 **Re-decided.** B3's answer changed the scope by adding a second interaction mode, so FEEDBACK.md §2 had a person re-decide the gate. Konrad did, on 2026-09-23: "Go: prompt + implement (Recommended)". The same day he confirmed A11's reading of B3 ("Yes, per deployment (Recommended)") and authorised merging the implementation once CI is green with no open review comments ("Yes, merge when green").
 
-**Next:** `docs/analysis/AUTH-MCP-01.master-prompt.md`, generated from this revision, then `/implementation-phase`.
+**Next:** `docs/analysis/AUTH-MCP-01.master-prompt.md`, generated from the latest revision, then `/implementation-phase`.
 
 **Definition of done**, verbatim from brief §9, so the master prompt can carry it:
 
@@ -650,6 +675,8 @@ None yet. An accepted risk names the person who accepted it (TICKET-ANALYSIS §6
 - The AC7 regression is proven.
 - `quality-and-process:security-review` has been run over the diff with no open blocking finding.
 - No file is touched outside the analysis table.
+
+**Revision 4 re-test.** The four conditions are still met. §5.4's findings correct rows and notes without changing scope, adding a criterion or naming a new file, so FEEDBACK.md §2 asks for no re-decision. The master prompt generated from revision 3 is stale, and is generated again from this revision.
 
 ---
 
@@ -660,6 +687,7 @@ None yet. An accepted risk names the person who accepted it (TICKET-ANALYSIS §6
 | 1, 2026-09-23 | First pass. §2 table for AC1–AC9 with row notes; 12 findings against the brief (F1–F12); blocking questions B1–B3; assumptions N1–N14; D2–D4 confirmed and D1 pending B2; decisions A1–A10; Q3 and Q4 struck; Q1 → B3, Q2 → N1, Q5 → A1 | The brief; `architecture-standards@e794863`; MCP specification 2026-07-28; `CLAUDE-AUTH`, `CLAUDE-TS`, `CLAUDE-HELP`; OpenIddict 7.7.1 source; the read-only exploratory round | B1, B2, B3; confirmation of N1, A1–A10 |
 | 2, 2026-09-23 | Landed Konrad's answers: B1 closed (the migration sets landed in PR #65), B2 answered (amend ADR 0003 through ADR 0005), B3 answered as a scope change (both interaction modes). AC2 rewritten for both modes, files and notes; AC3, AC6, AC8 and AC9 unblocked; A11–A13 added; F7, flags 1/2/9, the §3 P4 and P14 rows, Q1 and D1 updated; out of scope restated. Gate re-tested: all four conditions met, re-decision requested | Konrad's answers in the session (2026-09-23); PR #65 | Konrad's re-decision of the gate; confirmation of N1 and A1–A13 |
 | 3, 2026-09-23 | Recorded Konrad's re-decision of the gate (go), his confirmation of A11's reading of B3, and his authorisation to merge when green. Copied the brief's definition of done into §7, verbatim, for the master prompt to carry. Nothing else changed | Konrad's answers in the session (2026-09-23) | Confirmation of N1, A1–A10, A12 and A13 happens at PR review |
+| 4, 2026-09-23 | Landed the implementation phase's findings I1–I9 (§5.4): the scope-description configuration shape (AC5 notes); four library facts in §4.5, with their overrides; the browser binding of a Hosted external sign-in (AC2 notes); `UseSetting` for the new project's hosts (AC8 notes, N14); three observations in §4.6 and N6's corrected citation. Gate re-tested, still met; no re-decision needed | The implementation phase's reading of `openiddict-core@7.7.1` and the code, before any production change; `SignInCharacterizationTests` | Confirmation of N1, A1–A10, A12 and A13 happens at PR review |
 
 ---
 
