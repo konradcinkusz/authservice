@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text;
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
 namespace AuthService.Mcp;
@@ -20,8 +21,10 @@ public static class IntegrateTool
         "the project's stack (ASP.NET Core, Node/Express, or Python/FastAPI) unless overridden, " +
         "adds an authservice service block to its docker-compose.yml, generates a JWT bearer " +
         "validation snippet for that stack, generates a fresh RS256 signing key that is never " +
-        "reused across projects, and pins the latest published authservice release tag instead " +
-        "of floating :latest. When deploy is true, also runs 'docker compose up -d'.")]
+        "reused across projects and mounts it into the container as a compose secret, kept out " +
+        "of git, gives the project its own token issuer and audience, and pins the latest " +
+        "published authservice release tag instead of floating :latest. When deploy is true, " +
+        "also runs 'docker compose up -d'.")]
     public static async Task<string> Integrate(
         [Description("Absolute path to the consumer project's root directory.")]
         string targetPath,
@@ -32,20 +35,40 @@ public static class IntegrateTool
         string databaseProvider = "PostgreSQL",
         [Description("Override stack detection: 'aspnetcore', 'node-express', or 'python-fastapi'. Leave unset to auto-detect.")]
         string? stack = null,
+        [Description("Issuer and audience of this project's tokens, set both in authservice and in the " +
+            "generated validation code. Letters, digits and . _ : / - only. Defaults to the project " +
+            "directory's name.")]
+        string? issuer = null,
         [Description("Run 'docker compose up -d' after scaffolding. Defaults to false (scaffold only).")]
         bool deploy = false)
     {
         if (!Path.IsPathRooted(targetPath))
         {
-            throw new ArgumentException($"targetPath '{targetPath}' must be absolute.", nameof(targetPath));
+            throw new McpException($"targetPath '{targetPath}' must be absolute.");
         }
 
         if (!Directory.Exists(targetPath))
         {
-            throw new InvalidOperationException($"targetPath '{targetPath}' does not exist or is not a directory.");
+            throw new McpException($"targetPath '{targetPath}' does not exist or is not a directory.");
         }
 
-        var resolvedStack = stack is null ? StackDetector.Detect(targetPath) : ParseStack(stack);
+        // Every input is checked before anything is written, so a bad value leaves no half-done
+        // scaffold. McpException is the one exception whose message the SDK hands back to the
+        // client; any other reaches it only as "An error occurred invoking 'integrate'".
+        ConsumerStack resolvedStack;
+        string resolvedIssuer;
+        string publicBaseUrl;
+        try
+        {
+            publicBaseUrl = JwtConfigGenerator.NormalizeUrl(authServiceUrl);
+            resolvedIssuer = TokenIssuer.Resolve(issuer, targetPath);
+            resolvedStack = stack is null ? StackDetector.Detect(targetPath) : ParseStack(stack);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            throw new McpException(ex.Message, ex);
+        }
+
         var summary = new StringBuilder();
         summary.AppendLine($"Stack: {resolvedStack}");
 
@@ -55,16 +78,18 @@ public static class IntegrateTool
             : $"Image tag: {tag} (pinned)");
 
         var (privateKeyPem, _) = SigningKeyGenerator.GenerateRsaKeyPair();
-        var keyDir = Path.Join(targetPath, ".authservice");
-        Directory.CreateDirectory(keyDir);
-        var keyPath = Path.Join(keyDir, "signing-key.pem");
-        await File.WriteAllTextAsync(keyPath, privateKeyPem);
-        summary.AppendLine($"Signing key: {keyPath} — fresh RS256 key for this project only, never reuse it elsewhere");
+        var keyPath = await SigningKeyStore.WriteAsync(targetPath, privateKeyPem);
+        summary.AppendLine($"Signing key: {keyPath} — fresh RS256 key for this project only, never reuse it elsewhere. " +
+            $"Mounted into the container as the compose secret '{ComposeScaffolder.SigningKeySecret}'; " +
+            $"{SigningKeyStore.DirectoryName}/ is ignored by git.");
 
-        var composePath = ComposeScaffolder.AddService(targetPath, tag, databaseProvider);
-        summary.AppendLine($"docker-compose.yml: {composePath} (authservice service added/updated)");
+        summary.AppendLine($"Issuer and audience: {resolvedIssuer} (set in authservice and in the validation code)");
 
-        var jwtConfigPath = JwtConfigGenerator.Generate(targetPath, resolvedStack, authServiceUrl);
+        var composePath = ComposeScaffolder.AddService(targetPath, tag, databaseProvider, resolvedIssuer, publicBaseUrl);
+        summary.AppendLine($"docker-compose.yml: {composePath} (authservice service added/updated; " +
+            "set ConnectionStrings__DefaultConnection to this project's own database before starting it)");
+
+        var jwtConfigPath = JwtConfigGenerator.Generate(targetPath, resolvedStack, authServiceUrl, resolvedIssuer);
         summary.AppendLine($"JWT validation config: {jwtConfigPath}");
 
         if (deploy)
