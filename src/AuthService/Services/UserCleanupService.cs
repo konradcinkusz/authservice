@@ -57,7 +57,7 @@ public class UserCleanupService : BackgroundService
             {
                 await PruneAuthorizationServerAsync(stoppingToken);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
             {
                 _logger.LogError(ex, "Error pruning the authorization server's expired rows");
             }

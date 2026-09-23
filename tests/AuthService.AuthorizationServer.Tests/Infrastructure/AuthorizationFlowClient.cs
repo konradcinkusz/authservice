@@ -184,7 +184,8 @@ public sealed class AuthorizationFlowClient : IDisposable
         form["Email"] = email;
         form["Password"] = password;
 
-        return await Browser.PostAsync(signInPage, new FormUrlEncodedContent(form));
+        using var content = new FormUrlEncodedContent(form);
+        return await Browser.PostAsync(signInPage, content);
     }
 
     /// <summary>Shows the consent page and posts the decision back to the authorization endpoint.</summary>
@@ -196,7 +197,8 @@ public sealed class AuthorizationFlowClient : IDisposable
         var form = HtmlForm.Parse(await page.Content.ReadAsStringAsync(), "consent-form");
         form["consent"] = decision;
 
-        return await Browser.PostAsync("/connect/authorize", new FormUrlEncodedContent(form));
+        using var content = new FormUrlEncodedContent(form);
+        return await Browser.PostAsync("/connect/authorize", content);
     }
 
     public Task<HttpResponseMessage> ExchangeCodeAsync(
@@ -233,11 +235,11 @@ public sealed class AuthorizationFlowClient : IDisposable
     /// A token request, authenticated with client_secret_basic, client_secret_post, or — with an
     /// empty secret — not at all.
     /// </summary>
-    public Task<HttpResponseMessage> TokenAsync(IDictionary<string, string> form, string? secret = null, bool basic = true)
+    public async Task<HttpResponseMessage> TokenAsync(IDictionary<string, string> form, string? secret = null, bool basic = true)
     {
         secret ??= _factory.ClientSecret;
         var body = new Dictionary<string, string>(form);
-        var request = new HttpRequestMessage(HttpMethod.Post, "/connect/token");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/connect/token");
 
         if (secret.Length == 0)
         {
@@ -255,7 +257,7 @@ public sealed class AuthorizationFlowClient : IDisposable
         }
 
         request.Content = new FormUrlEncodedContent(body);
-        return Backchannel.SendAsync(request);
+        return await Backchannel.SendAsync(request);
     }
 
     public static async Task<TokenResult> ReadTokensAsync(HttpResponseMessage response)
@@ -387,11 +389,10 @@ public sealed class TestResourceServer : IAsyncDisposable
         return new TestResourceServer(app);
     }
 
-    public Task<HttpResponseMessage> CallAsync(string accessToken)
+    public async Task<HttpResponseMessage> CallAsync(string accessToken)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, "/mcp");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        return Client.SendAsync(request);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/mcp").WithBearer(accessToken);
+        return await Client.SendAsync(request);
     }
 
     public async ValueTask DisposeAsync()

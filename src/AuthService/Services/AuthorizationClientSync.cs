@@ -29,13 +29,11 @@ public sealed class AuthorizationClientSync(
             await migrationSignal.WaitAsync(stoppingToken);
             await SyncAsync(stoppingToken);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !stoppingToken.IsCancellationRequested)
         {
             // Never take the host down: the rest of the service works without the authorization
             // server, and the next start retries. Connections fail with invalid_client meanwhile.
+            // Only a shutdown's cancellation passes through, which the host treats as a clean stop.
             logger.LogError(ex, "Registering the authorization server's clients failed; MCP clients cannot connect until it succeeds.");
         }
     }

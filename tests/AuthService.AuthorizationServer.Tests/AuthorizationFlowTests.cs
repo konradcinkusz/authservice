@@ -412,7 +412,8 @@ public class AuthorizationFlowTests : IAsyncLifetime
         form.Remove("__RequestVerificationToken");
         form["consent"] = "accept";
 
-        var posted = await _flow.Browser.PostAsync("/connect/authorize", new FormUrlEncodedContent(form));
+        using var content = new FormUrlEncodedContent(form);
+        var posted = await _flow.Browser.PostAsync("/connect/authorize", content);
 
         Assert.Equal(HttpStatusCode.BadRequest, posted.StatusCode);
     }
@@ -493,7 +494,8 @@ public class AuthorizationFlowTests : IAsyncLifetime
         var twoFactorPage = afterPassword.Headers.Location!;
         var form = HtmlForm.Parse(await _flow.Browser.GetStringAsync(twoFactorPage), "twofactor-form");
         form["Code"] = "000000";
-        Assert.Equal("That code is not valid.", await ReadPageErrorAsync(await _flow.Browser.PostAsync(twoFactorPage, new FormUrlEncodedContent(form))));
+        using var wrongCode = new FormUrlEncodedContent(form);
+        Assert.Equal("That code is not valid.", await ReadPageErrorAsync(await _flow.Browser.PostAsync(twoFactorPage, wrongCode)));
         await WithUserAsync(email, (_, user) =>
         {
             Assert.Equal(1, user.AccessFailedCount);
@@ -503,7 +505,8 @@ public class AuthorizationFlowTests : IAsyncLifetime
         form = HtmlForm.Parse(await _flow.Browser.GetStringAsync(twoFactorPage), "twofactor-form");
         form["Code"] = string.Empty;
         form["RecoveryCode"] = recoveryCode;
-        var afterSecondFactor = await _flow.Browser.PostAsync(twoFactorPage, new FormUrlEncodedContent(form));
+        using var withRecoveryCode = new FormUrlEncodedContent(form);
+        var afterSecondFactor = await _flow.Browser.PostAsync(twoFactorPage, withRecoveryCode);
         Assert.True(AuthorizationFlowClient.IsLocalRedirect(afterSecondFactor, "/connect/authorize"), await AuthorizationFlowClient.DescribeAsync(afterSecondFactor));
 
         var consent = await _flow.Browser.GetAsync(afterSecondFactor.Headers.Location);

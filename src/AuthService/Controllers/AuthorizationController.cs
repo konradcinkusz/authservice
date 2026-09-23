@@ -152,12 +152,12 @@ public class AuthorizationController(
         // The consent page posts the decision back here, so the library validates the whole
         // request again before a code is issued on the strength of it.
         if (HttpMethods.IsPost(Request.Method) && Request.HasFormContentType &&
-            Request.Form.ContainsKey(AuthorizationServerDefaults.ConsentParameter))
+            Request.Form.TryGetValue(AuthorizationServerDefaults.ConsentParameter, out var decision))
         {
             if (!await _antiforgery.IsRequestValidAsync(HttpContext))
                 return BadRequest("The consent form has expired. Start again from the application.");
 
-            var accepted = Request.Form[AuthorizationServerDefaults.ConsentParameter] == "accept";
+            var accepted = decision == "accept";
 
             await _audit.LogAsync(
                 accepted ? AuditAction.OAuthConsentGranted : AuditAction.OAuthConsentDenied,
@@ -297,11 +297,7 @@ public class AuthorizationController(
     {
         var identity = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role);
 
-        foreach (var claim in await _tokenService.BuildClaimsAsync(user))
-        {
-            if (claim.Type != JwtRegisteredClaimNames.Jti)
-                identity.AddClaim(claim);
-        }
+        identity.AddClaims((await _tokenService.BuildClaimsAsync(user)).Where(claim => claim.Type != JwtRegisteredClaimNames.Jti));
 
         identity.SetScopes(scopes);
         identity.SetResources(resources);

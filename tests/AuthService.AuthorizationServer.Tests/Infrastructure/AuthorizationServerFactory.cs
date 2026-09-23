@@ -40,6 +40,7 @@ public class AuthorizationServerFactory : WebApplicationFactory<Program>
     private readonly bool _ownsConnection;
     private bool _databaseInitialized;
 
+    /// <summary>A host with the defaults above, adjusted by <paramref name="configure"/>.</summary>
     /// <param name="configure">Adjusts the settings before the host is built; a null value removes a key.</param>
     /// <param name="signingKey">The current signing key; generated when not supplied.</param>
     /// <param name="sharedConnection">A database another factory already created, to model a restart.</param>

@@ -247,16 +247,19 @@ public class ExternalInteractionTests : IAsyncLifetime
         return AuthorizationFlowClient.Query(location)["interaction"];
     }
 
-    private Task<HttpResponseMessage> InteractionAsync(string accessToken, string handle) =>
-        _flow.Backchannel.SendAsync(new HttpRequestMessage(HttpMethod.Get, $"/api/v1/oauth/interactions/{handle}").WithBearer(accessToken));
-
-    private Task<HttpResponseMessage> DecideAsync(string accessToken, string handle, string decision, object? body = null)
+    private async Task<HttpResponseMessage> InteractionAsync(string accessToken, string handle)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/oauth/interactions/{handle}/{decision}")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/oauth/interactions/{handle}").WithBearer(accessToken);
+        return await _flow.Backchannel.SendAsync(request);
+    }
+
+    private async Task<HttpResponseMessage> DecideAsync(string accessToken, string handle, string decision, object? body = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/oauth/interactions/{handle}/{decision}")
         {
             Content = JsonContent.Create(body ?? new { })
         };
-        return _flow.Backchannel.SendAsync(request.WithBearer(accessToken));
+        return await _flow.Backchannel.SendAsync(request.WithBearer(accessToken));
     }
 
     private async Task<string> AcceptAsync(string accessToken, string handle)
