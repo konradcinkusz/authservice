@@ -113,8 +113,5 @@ public class TwoFactorModel(
             Path = AuthorizationServerDefaults.CookiePath
         });
 
-    private bool IsAuthorizationRequest(string? returnUrl) =>
-        !string.IsNullOrEmpty(returnUrl)
-        && Url.IsLocalUrl(returnUrl)
-        && returnUrl.StartsWith(AuthorizationServerDefaults.AuthorizationEndpoint + "?", StringComparison.Ordinal);
+    private bool IsAuthorizationRequest(string? returnUrl) => SignInModel.IsAuthorizationRequest(Url, returnUrl);
 }

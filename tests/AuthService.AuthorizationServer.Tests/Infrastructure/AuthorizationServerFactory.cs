@@ -1,12 +1,15 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using AuthService.Data;
 using AuthService.Extensions;
+using AuthService.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace AuthService.AuthorizationServer.Tests.Infrastructure;
 
@@ -88,6 +91,10 @@ public class AuthorizationServerFactory : WebApplicationFactory<Program>
     }
 
     public RSA SigningKey { get; }
+
+    /// <summary>Every log line the host writes, through the host's own filters, for the "nothing secret is logged" check (N5).</summary>
+    public CapturingLoggerProvider Logs { get; } = new();
+
     public string ClientSecret { get; }
     public string EncryptionKey { get; }
     public Dictionary<string, string?> Settings { get; }
@@ -104,6 +111,8 @@ public class AuthorizationServerFactory : WebApplicationFactory<Program>
             if (value is not null)
                 builder.UseSetting(key, value);
         }
+
+        builder.ConfigureLogging(logging => logging.AddProvider(Logs));
 
         builder.ConfigureServices(services =>
         {
@@ -153,6 +162,9 @@ public class AuthorizationServerFactory : WebApplicationFactory<Program>
 
         Services.GetRequiredService<IMigrationCompletionSignal>().SetCompleted();
 
+        // What AuthorizationClientSync does at startup, run here rather than in the background.
+        await ActivatorUtilities.CreateInstance<AuthorizationClientSync>(Services).SyncAsync();
+
         _databaseInitialized = true;
     }
 
@@ -177,5 +189,38 @@ public class AuthorizationServerFactory : WebApplicationFactory<Program>
             _connection.Dispose();
 
         base.Dispose(disposing);
+    }
+}
+
+/// <summary>Collects every log entry a host writes, formatted and with its structured values.</summary>
+public sealed class CapturingLoggerProvider : ILoggerProvider
+{
+    private readonly ConcurrentQueue<string> _entries = new();
+
+    public IReadOnlyCollection<string> Entries => _entries.ToArray();
+
+    public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, _entries);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class CapturingLogger(string category, ConcurrentQueue<string> entries) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        // The host's filter rules decide what reaches this provider, as they do for the console.
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            entries.Enqueue($"{logLevel} {category}: {formatter(state, exception)} {exception}");
+
+            if (state is IEnumerable<KeyValuePair<string, object?>> values)
+            {
+                foreach (var (key, value) in values)
+                    entries.Enqueue($"  {key}={value}");
+            }
+        }
     }
 }

@@ -162,10 +162,12 @@ public class SignInModel(
         ClientName = ClientNameFor(ReturnUrl, _options.Value);
     }
 
+    private bool IsAuthorizationRequest(string? returnUrl) => IsAuthorizationRequest(Url, returnUrl);
+
     /// <summary>A local URL for this server's authorization endpoint, and nothing else: never an open redirect.</summary>
-    internal bool IsAuthorizationRequest(string? returnUrl) =>
+    internal static bool IsAuthorizationRequest(IUrlHelper url, string? returnUrl) =>
         !string.IsNullOrEmpty(returnUrl)
-        && Url.IsLocalUrl(returnUrl)
+        && url.IsLocalUrl(returnUrl)
         && returnUrl.StartsWith(AuthorizationServerDefaults.AuthorizationEndpoint + "?", StringComparison.Ordinal);
 
     internal static string? ClientNameFor(string? returnUrl, AuthorizationServerOptions options)

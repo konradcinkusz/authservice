@@ -26,6 +26,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The reaper's steps, run directly by the authorization server's revocation tests. -->
+    <InternalsVisibleTo Include="AuthService.AuthorizationServer.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The model, the DbContext and the provider wiring. -->
     <ProjectReference Include="..\AuthService.Data\AuthService.Data.csproj" />
 

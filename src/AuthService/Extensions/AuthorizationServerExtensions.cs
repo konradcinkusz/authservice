@@ -191,7 +191,7 @@ public static class AuthorizationServerExtensions
                   .EnableTokenEndpointPassthrough();
 
             server.AddEventHandler(AttachIssuerToAuthorizationResponse.Descriptor);
-            server.AddEventHandler(AttachIssuerToAccessToken.Descriptor);
+            server.AddEventHandler(ShapeAccessToken.Descriptor);
             server.AddEventHandler(AuditRefreshTokenReuse.Descriptor);
         });
 
@@ -365,7 +365,9 @@ internal sealed class AuthorizationServerPageHeaders : IAsyncPageFilter
         headers.XContentTypeOptions = "nosniff";
         headers["Referrer-Policy"] = "no-referrer";
         headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()";
-        headers.CacheControl = "no-store";
+        // What antiforgery sets itself; anything else makes it log a warning on every page.
+        headers.CacheControl = "no-cache, no-store";
+        headers.Pragma = "no-cache";
 
         return next();
     }
@@ -454,20 +456,33 @@ internal sealed class AttachIssuerToAuthorizationResponse(AuthorizationServerIss
     }
 }
 
-/// <summary>Writes A1's issuer into access tokens' <c>iss</c>. The library accepts both forms on its own tokens.</summary>
-internal sealed class AttachIssuerToAccessToken(AuthorizationServerIssuer issuer) : IOpenIddictServerHandler<GenerateTokenContext>
+/// <summary>
+/// Makes an access token exactly the contract resource servers validate against (A9): A1's
+/// issuer in <c>iss</c>, and none of the library's private <c>oi_*</c> claims (the internal ids of
+/// the authorization, the presenter and the token entry), which it otherwise leaves in the JWT.
+/// The library accepts both issuer forms on the codes and refresh tokens it reads back itself.
+/// </summary>
+internal sealed class ShapeAccessToken(AuthorizationServerIssuer issuer) : IOpenIddictServerHandler<GenerateTokenContext>
 {
     public static OpenIddictServerHandlerDescriptor Descriptor { get; }
         = OpenIddictServerHandlerDescriptor.CreateBuilder<GenerateTokenContext>()
-            .UseSingletonHandler<AttachIssuerToAccessToken>()
+            .UseSingletonHandler<ShapeAccessToken>()
             .SetOrder(OpenIddictServerHandlers.Protection.AttachTokenMetadata.Descriptor.Order + 1)
             .SetType(OpenIddictServerHandlerType.Custom)
             .Build();
 
     public ValueTask HandleAsync(GenerateTokenContext context)
     {
-        if (context.TokenType == TokenTypeIdentifiers.AccessToken)
-            context.SecurityTokenDescriptor.Issuer = issuer.Value;
+        if (context.TokenType != TokenTypeIdentifiers.AccessToken)
+            return ValueTask.CompletedTask;
+
+        context.SecurityTokenDescriptor.Issuer = issuer.Value;
+
+        if (context.SecurityTokenDescriptor.Subject is { } subject)
+        {
+            foreach (var claim in subject.Claims.Where(c => c.Type.StartsWith(Claims.Prefixes.Private, StringComparison.Ordinal)).ToList())
+                subject.RemoveClaim(claim);
+        }
 
         return ValueTask.CompletedTask;
     }

@@ -102,12 +102,8 @@ public class ExternalReturnModel(
         {
             var protector = _dataProtection.CreateProtector(ExternalResume.Purpose).ToTimeLimitedDataProtector();
             var candidate = JsonSerializer.Deserialize<ExternalResume>(protector.Unprotect(cookie));
-            if (candidate is null ||
-                !Url.IsLocalUrl(candidate.ReturnUrl) ||
-                !candidate.ReturnUrl.StartsWith(AuthorizationServerDefaults.AuthorizationEndpoint + "?", StringComparison.Ordinal))
-            {
+            if (candidate is null || !SignInModel.IsAuthorizationRequest(Url, candidate.ReturnUrl))
                 return false;
-            }
 
             state = candidate;
             return true;

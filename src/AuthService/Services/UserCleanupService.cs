@@ -68,7 +68,7 @@ public class UserCleanupService : BackgroundService
         _logger.LogInformation("User cleanup service stopped");
     }
 
-    private async Task CleanupExpiredUsersAsync(CancellationToken cancellationToken)
+    internal async Task CleanupExpiredUsersAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
@@ -143,7 +143,7 @@ public class UserCleanupService : BackgroundService
             await tokens.DeleteAsync(token, cancellationToken);
     }
 
-    private async Task PruneAuthorizationServerAsync(CancellationToken cancellationToken)
+    internal async Task PruneAuthorizationServerAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var services = scope.ServiceProvider;
