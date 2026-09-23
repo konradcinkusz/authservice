@@ -42,6 +42,7 @@ public class AuthorizationInteractionController(
     /// <summary>What a pending interaction asks for: which client, where it returns, and which scopes.</summary>
     [HttpGet("{handle}")]
     [ProducesResponseType(typeof(AuthorizationInteractionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Get(string handle)
     {
@@ -75,6 +76,7 @@ public class AuthorizationInteractionController(
     [HttpPost("{handle}/accept")]
     [ProducesResponseType(typeof(AuthorizationInteractionDecisionResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
@@ -84,6 +86,7 @@ public class AuthorizationInteractionController(
     /// <summary>Records a refusal. The browser still goes back through authservice, which tells the client.</summary>
     [HttpPost("{handle}/deny")]
     [ProducesResponseType(typeof(AuthorizationInteractionDecisionResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public Task<IActionResult> Deny(string handle) =>

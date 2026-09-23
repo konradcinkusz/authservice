@@ -170,7 +170,7 @@ Optional:
 | `OAuth:CallbackBaseUrl` | Public base URL the OAuth provider redirects back to |
 | `OAuth:PostLoginRedirectBaseUrl` | Frontend URL to redirect to after login |
 | `SendGrid:ApiKey` / `FromEmail` / `FromName` | Enables real email delivery; otherwise emails are only logged |
-| `App:Name` | Product name used in email templates (default: "Auth Service") |
+| `App:Name` | Product name used in email templates and on the MCP sign-in and consent pages (default: "Auth Service") |
 | `InitialAdmin:Email` / `Password` | Seeds a `SuperAdmin` account on first startup |
 | `Cors:AllowedOrigins` | Array of allowed frontend origins |
 | `ConsentVersions:Terms` / `Privacy` / `Cookies` | Legal document versions users must accept |
@@ -298,7 +298,7 @@ credentials.
 ## Deploying your own instance
 
 This service is meant to be reused as-is: each consuming project runs its **own
-independent instance** — own compute, own database, own `Jwt:SecretKey` — rather than
+independent instance** — own compute, own database, own signing key — rather than
 sharing one central deployment across products. There's no source-level dependency to
 take on and this repo hosts no canonical instance of its own; a consuming project pulls
 a released image and runs it as part of *its own* infrastructure.
@@ -311,7 +311,7 @@ app = "<yourproject>-authservice"
 primary_region = "fra"
 
 [build]
-  image = "ghcr.io/konradcinkusz/authservice:v0.1.0"   # pin a real tag, don't float :latest
+  image = "ghcr.io/konradcinkusz/authservice:v0.3.2"   # pin a real tag, don't float :latest
 
 [env]
   ASPNETCORE_ENVIRONMENT = "Production"
@@ -335,11 +335,12 @@ primary_region = "fra"
 ```
 
 Deploy it with `flyctl deploy --config flyio/authservice.fly.toml --app
-<yourproject>-authservice --image ghcr.io/konradcinkusz/authservice:v0.1.0`, with
-`ConnectionStrings__DefaultConnection` and `Jwt__SecretKey` set as Fly secrets pointing
+<yourproject>-authservice --image ghcr.io/konradcinkusz/authservice:v0.3.2`, with
+`ConnectionStrings__DefaultConnection` and `Jwt__PrivateKeyPem` set as Fly secrets pointing
 at *that project's own* database and *that project's own*, independently generated
-signing key. Never reuse a signing key or database across two projects' instances — each
-is meant to be a fully independent trust root, not a shared identity provider.
+signing key ([Token signing](#token-signing)). Never reuse a signing key or database across
+two projects' instances — each is meant to be a fully independent trust root, not a shared
+identity provider.
 
 Not deploying to Fly? The same image runs anywhere that runs containers — plain `docker
 run`, Azure Container Apps, Kubernetes, whatever the consuming project already uses.

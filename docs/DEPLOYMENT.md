@@ -11,12 +11,13 @@ deployments are written against.
 ## The image
 
 ```
-ghcr.io/konradcinkusz/authservice:v0.1.0
+ghcr.io/konradcinkusz/authservice:v0.3.2
 ```
 
 Published by [`.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml) on
 every `v*` tag. Pin a version rather than tracking `latest`: this is `0.x`, and the HTTP
-contract may still move.
+contract may still move. [Releases](https://github.com/konradcinkusz/authservice/releases) lists
+every version and what changed in it.
 
 ## What the container needs
 
@@ -55,7 +56,7 @@ app = "yourproduct-authservice"
 primary_region = "fra"
 
 [build]
-  image = "ghcr.io/konradcinkusz/authservice:v0.1.0"
+  image = "ghcr.io/konradcinkusz/authservice:v0.3.2"
 
 [env]
   ASPNETCORE_ENVIRONMENT = "Production"
@@ -284,6 +285,8 @@ the same rules as the login API, a second-factor page, a consent page, and the c
 providers. For a provider to work from these pages, add this service's own origin to
 `OAuth__PostLoginRedirectAllowedBaseUrls` — the provider flow returns to `/oauth/callback` on it.
 Registration and password reset are not offered there; the pages link to `FrontendBaseUrl`.
+They name your product with `App__Name`, which otherwise reads "Auth Service": set it to the name
+your users know, since those pages are where they decide whether to let a client in.
 
 **`External`**. The browser goes to your frontend instead, which signs the user in and asks for
 consent with the flows it already has. Set `AuthorizationServer__Interaction__ExternalUrl` to that
@@ -300,7 +303,18 @@ page's absolute https URL. The contract it works to:
    returns to authservice with a single-use ticket, and authservice finishes the flow with the client.
 
 The ticket works only in the browser that started the request, which carries an authservice cookie
-for it: a link forwarded to anyone else fails. The API is server-to-server, so it needs no CORS.
+for it: a link forwarded to anyone else fails, and spends the ticket, so the user starts again from
+the client. The API is server-to-server, so it needs no CORS.
+
+Besides success, the API answers:
+
+| Status | `error` | Meaning, and what to do |
+| --- | --- | --- |
+| `400` | `invalid_scope`, `invalid_target` | An accept named scopes or a resource other than the ones requested. Repeat what `GET` returned, or send neither |
+| `401` | `invalid_token`, or no body | No token, or one whose session has ended (below). Refresh the session or sign the user in again, then retry |
+| `403` | `account_not_eligible` | The account may not be given access; `reason` says why. On `consent_required`, have the user accept the current Terms and Privacy versions, then accept again. The others are `email_not_confirmed`, `locked_out` and `account_unavailable` |
+| `404` | a sentence | The handle is unknown, has expired, or was already decided |
+| `409` | a sentence | Another decision landed at the same moment, and it stands |
 
 Two things are the page's to get right:
 
@@ -347,6 +361,10 @@ Two things are the page's to get right:
 - A scope or resource you withdraw from a client takes effect on its existing connections at their
   next refresh: a withdrawn scope is left out of the new token, and a connection to a withdrawn
   resource ends.
+- Claude calls the metadata and token endpoints from its servers, so it needs no CORS. A client that
+  calls them from a web page, such as a browser-based MCP inspector you test with, needs that page's
+  origin in `Cors__AllowedOrigins` and a client of its own with the page's redirect URI; `http` on a
+  loopback address is accepted. Keep such a client, and its origin, to a test deployment.
 
 ## A note on shape
 
