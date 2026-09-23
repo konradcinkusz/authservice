@@ -1,0 +1,107 @@
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
+@{
+    // The authorization server's pages only: sign-in, second factor, consent and the external
+    // sign-in landing page (ADR 0005). No script at all; the style block carries the nonce the
+    // Content-Security-Policy names (AuthorizationServerPageHeaders).
+    var nonce = Context.Items[AuthService.Extensions.AuthorizationServerDefaults.CspNonceItem] as string;
+    var appName = Configuration["App:Name"] ?? "Auth Service";
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>@ViewData["Title"] · @appName</title>
+    <style nonce="@nonce">
+        :root {
+            color-scheme: light dark;
+            --fg: #1c1c1a;
+            --muted: #5c5c57;
+            --bg: #f4f4f1;
+            --card: #ffffff;
+            --line: #d6d6d0;
+            --accent: #1d5bb8;
+            --accent-fg: #ffffff;
+            --danger: #a31c1c;
+        }
+
+        @@media (prefers-color-scheme: dark) {
+            :root {
+                --fg: #ececea;
+                --muted: #a4a49f;
+                --bg: #151514;
+                --card: #1f1f1d;
+                --line: #3a3a37;
+                --accent: #7ea9ee;
+                --accent-fg: #0e1a2e;
+                --danger: #f19191;
+            }
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            background: var(--bg);
+            color: var(--fg);
+            font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        }
+        main {
+            width: 100%;
+            max-width: 420px;
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 28px 24px;
+        }
+        .app { margin: 0 0 20px; color: var(--muted); font-size: 14px; }
+        h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600; }
+        p { margin: 0 0 16px; }
+        .muted { color: var(--muted); font-size: 14px; }
+        .error { color: var(--danger); border: 1px solid var(--danger); border-radius: 8px; padding: 10px 12px; }
+        label { display: block; margin: 12px 0 4px; font-size: 14px; font-weight: 500; }
+        input[type=email], input[type=password], input[type=text] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--bg);
+            color: var(--fg);
+            font: inherit;
+        }
+        button, .button {
+            display: block;
+            width: 100%;
+            margin-top: 16px;
+            padding: 10px 14px;
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            background: var(--accent);
+            color: var(--accent-fg);
+            font: inherit;
+            font-weight: 600;
+            text-align: center;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .secondary { background: transparent; color: var(--fg); border-color: var(--line); }
+        .row { display: flex; gap: 12px; }
+        .row > * { flex: 1; }
+        ul.scopes { margin: 0 0 16px; padding-left: 20px; }
+        ul.scopes li { margin: 4px 0; }
+        .divider { margin: 20px 0 0; color: var(--muted); font-size: 14px; text-align: center; }
+        a { color: var(--accent); }
+    </style>
+</head>
+<body>
+    <main>
+        <p class="app">@appName</p>
+        @RenderBody()
+    </main>
+</body>
+</html>

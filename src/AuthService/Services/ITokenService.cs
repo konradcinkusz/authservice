@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using AuthService.Models;
 using AuthService.DTOs;
 
@@ -14,8 +15,18 @@ public interface ITokenService
     /// </summary>
     Task<TokenResponse?> RefreshTokenAsync(string refreshToken);
 
-    /// <summary>Revokes every live refresh token for the user, recording why.</summary>
+    /// <summary>
+    /// Revokes every live refresh token for the user, recording why — and the user's MCP client
+    /// authorizations and tokens with them.
+    /// </summary>
     Task RevokeRefreshTokensAsync(string userId, string reason = RefreshTokenRevocationReason.Logout);
+
+    /// <summary>
+    /// The claims an access token for the user carries: identity, roles and organization
+    /// memberships, stamped at issuance so no consumer has to call back (IDENTITY-AND-ACCOUNTS.md §1).
+    /// The authorization server builds MCP tokens from the same list, so both carry the same names.
+    /// </summary>
+    Task<List<Claim>> BuildClaimsAsync(ApplicationUser user);
 
     /// <summary>
     /// Issues a short-lived token that proves "this user passed the first factor". It is

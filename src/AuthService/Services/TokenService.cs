@@ -10,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 using AuthService.Models;
 using AuthService.DTOs;
 using AuthService.Data;
+using OpenIddict.Abstractions;
 
 namespace AuthService.Services;
 
@@ -19,6 +20,8 @@ public class TokenService(
     UserManager<ApplicationUser> _userManager,
     ApplicationDbContext _context,
     IAuditService _audit,
+    IOpenIddictAuthorizationManager _authorizationManager,
+    IOpenIddictTokenManager _authorizationServerTokens,
     ILogger<TokenService> _logger
 ) : ITokenService
 {
@@ -98,18 +101,26 @@ public class TokenService(
             .Where(rt => rt.UserId == userId && !rt.IsRevoked)
             .ToListAsync();
 
-        if (tokens.Count == 0)
-            return;
-
-        var now = DateTime.UtcNow;
-        foreach (var token in tokens)
+        if (tokens.Count > 0)
         {
-            token.IsRevoked = true;
-            token.RevokedAt = now;
-            token.RevokedReason = reason;
+            var now = DateTime.UtcNow;
+            foreach (var token in tokens)
+            {
+                token.IsRevoked = true;
+                token.RevokedAt = now;
+                token.RevokedReason = reason;
+            }
+
+            await _context.SaveChangesAsync();
         }
 
-        await _context.SaveChangesAsync();
+        // The same event ends the user's MCP connections: their authorizations (which is also
+        // what remembers consent) and every refresh token issued under them. One revocation
+        // operation across both stores, so no caller can end one kind of session and not the
+        // other (IDENTITY-AND-ACCOUNTS.md §2; ADR 0005). Access tokens already issued run out
+        // on their own, which is why MCP access tokens are short-lived.
+        await _authorizationManager.RevokeBySubjectAsync(userId);
+        await _authorizationServerTokens.RevokeBySubjectAsync(userId);
     }
 
     public string GenerateTwoFactorChallengeToken(ApplicationUser user)
@@ -214,7 +225,7 @@ public class TokenService(
         return family.Count;
     }
 
-    private async Task<List<Claim>> BuildClaimsAsync(ApplicationUser user)
+    public async Task<List<Claim>> BuildClaimsAsync(ApplicationUser user)
     {
         var claims = new List<Claim>
         {

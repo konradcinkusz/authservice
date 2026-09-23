@@ -38,6 +38,7 @@
          where `dotnet ef` looks for it, not here.) -->
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.11" />
+    <PackageReference Include="OpenIddict.EntityFrameworkCore" Version="7.7.1" />
   </ItemGroup>
 
 </Project>

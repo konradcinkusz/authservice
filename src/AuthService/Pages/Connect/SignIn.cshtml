@@ -1,0 +1,44 @@
+@page "/connect/signin"
+@model SignInModel
+@{
+    ViewData["Title"] = "Sign in";
+    Layout = "_ConnectLayout";
+}
+
+<h1>Sign in</h1>
+@if (Model.ClientName is not null)
+{
+    <p class="muted">to connect <strong>@Model.ClientName</strong></p>
+}
+
+@if (Model.Error is not null)
+{
+    <p class="error" role="alert" data-testid="signin-error">@Model.Error</p>
+}
+
+<form method="post" data-testid="signin-form">
+    <input type="hidden" asp-for="ReturnUrl" />
+
+    <label for="email">Email</label>
+    <input id="email" name="Email" type="email" autocomplete="username" required value="@Model.Email" />
+
+    <label for="password">Password</label>
+    <input id="password" name="Password" type="password" autocomplete="current-password" required />
+
+    <button type="submit">Sign in</button>
+</form>
+
+@if (Model.Providers.Count > 0)
+{
+    <p class="divider">or</p>
+    @foreach (var provider in Model.Providers)
+    {
+        <a class="button secondary" data-testid="provider-@provider.ToLowerInvariant()"
+           href="@Url.Page("SignIn", "External", new { provider, returnUrl = Model.ReturnUrl })">Continue with @provider</a>
+    }
+}
+
+@if (Model.ProductUrl is not null)
+{
+    <p class="divider">No account, or forgot your password? <a href="@Model.ProductUrl">Go to @Model.AppName</a>.</p>
+}

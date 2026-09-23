@@ -81,6 +81,12 @@ public static class AuditAction
     public const string OAuthAccountLinked = "oauth.account.linked";
     public const string OAuthLinkRejectedUnverified = "oauth.link.rejected_unverified";
 
+    // Authorization server (MCP connector clients, ADR 0005)
+    public const string OAuthConsentGranted = "oauth.consent.granted";
+    public const string OAuthConsentDenied = "oauth.consent.denied";
+    public const string OAuthClientRevoked = "oauth.client.revoked";
+    public const string OAuthRefreshTokenReuseDetected = "oauth.refresh.reuse_detected";
+
     // Account lifecycle
     public const string AccountSoftDeleted = "account.soft_deleted";
     public const string AccountRestored = "account.restored";

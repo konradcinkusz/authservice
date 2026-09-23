@@ -237,6 +237,10 @@ if (!string.IsNullOrWhiteSpace(githubClientId) && !string.IsNullOrWhiteSpace(git
 
 builder.Services.AddAuthorization();
 
+// OAuth 2.1 authorization server for MCP connector clients (ADR 0005). Off until a client is
+// configured under AuthorizationServer:Clients; its wiring lives in AuthorizationServerExtensions.
+var authorizationServer = builder.AddAuthorizationServer(signingKeys);
+
 // SECURITY: Which forwarded headers to believe, and from whom.
 //
 // Trusting X-Forwarded-For from any caller lets a client pick its own IP, which makes
@@ -294,6 +298,7 @@ builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IProviderEmailVerifier, ProviderEmailVerifier>();
 builder.Services.AddScoped<IOAuthExchangeCodeService, OAuthExchangeCodeService>();
+builder.Services.AddScoped<SignInFlow>();
 
 // Register email service - uses SendGrid when SENDGRID_API_KEY / SendGrid:ApiKey is set,
 // otherwise falls back to a no-op that logs warnings so the app starts without email configured.
@@ -386,10 +391,10 @@ var app = builder.Build();
 app.Logger.LogInformation(
     "AuthService starting. Provider={Provider}, SchemaMode={SchemaMode}, SigningAlgorithm={SigningAlgorithm}, " +
     "RequireConfirmedEmail={RequireConfirmedEmail}, EmailDelivery={EmailDelivery}, " +
-    "TrustAllProxies={TrustAllProxies}, ClientIpHeader={ClientIpHeader}",
+    "TrustAllProxies={TrustAllProxies}, ClientIpHeader={ClientIpHeader}, AuthorizationServer={AuthorizationServer}",
     dbProvider, schemaMode, signingKeys.Algorithm, requireConfirmedEmail,
     canSendEmail ? "SendGrid" : "disabled (no-op)",
-    networkOptions.TrustAllProxies, networkOptions.ClientIpHeader ?? "(none)");
+    networkOptions.TrustAllProxies, networkOptions.ClientIpHeader ?? "(none)", authorizationServer.ToString());
 
 if (!signingKeys.SupportsPublicVerification)
 {
@@ -454,6 +459,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapAuthorizationServer();
 
 // ─── Public key distribution ───────────────────────────────────────────────────
 // The point of asymmetric signing: consumers verify against this and cannot issue. Anonymous

@@ -1,0 +1,9 @@
+@page "/oauth/callback"
+@model ExternalReturnModel
+@{
+    ViewData["Title"] = "Sign-in not completed";
+    Layout = "_ConnectLayout";
+}
+
+<h1>Sign-in not completed</h1>
+<p class="error" role="alert" data-testid="external-return-error">@Model.Error</p>
