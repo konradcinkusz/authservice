@@ -1,7 +1,7 @@
 # AUTH-MCP-01: ticket analysis
 
-> **Revision 2**, 2026-09-23. Lands Konrad's answers to B1–B3 (§5.1). Revision 1 was the first pass of `/ticket-analysis`.
-> **Gate: all four conditions met (§7), awaiting Konrad's re-decision.** B3's answer changed scope, adding a second interaction mode, and FEEDBACK.md §2 says a scope change is re-decided by a person, not by this document.
+> **Revision 3**, 2026-09-23. Records Konrad's re-decision of the gate. Revision 2 landed his answers to B1–B3 (§5.1); revision 1 was the first pass of `/ticket-analysis`.
+> **Gate: decided, go.** All four conditions are met (§7), and Konrad re-decided the gate after revision 2's scope change: "Go: prompt + implement (Recommended)", 2026-09-23.
 > **Ticket:** the AUTH-MCP-01 brief, "authservice as an OAuth 2.1 authorization server for MCP connectors", as pasted into the session on 2026-09-23. Appendix A holds its acceptance criteria verbatim. If the tracker id changes, this file keeps its name until it is renamed.
 > **Downstream:** `AP-MCP-01` (AureliusPromptus MCP connector) is blocked on this ticket.
 > **Precedence:** once accepted, this document wins over the brief (brief §10). A disagreement goes back through `/ticket-feedback` and is not settled mid-implementation.
@@ -149,6 +149,7 @@ These are part of the table and travel with it into the master prompt.
 - The interaction API is bearer-authenticated, on the authenticated trust level (SERVICE-API-PATTERNS.md §2), under the `api` rate-limit policy. It needs no CORS, because a BFF calls it server-side (FRONTEND-BFF.md §1).
 - The browser-binding cookie defeats login CSRF: without it, an attacker could finish a victim's flow with a ticket issued to the attacker's own account, and the victim's Claude would be connected to the attacker's data.
 - The consumer's pages live in the consumer's repository (out of scope). The runbook documents the contract they call (AC9).
+
 **AC3**
 - An authorization code lives 60 s and is single-use. Refresh tokens rotate with a reuse leeway of 0; the library default is 30 s (`OpenIddictServerOptions.cs` L302). See N3.
 - Every refresh rebuilds the claims from the current user and refuses deleted or locked-out users, as `TokenService.RefreshTokenAsync` does today (L77–86; IDENTITY-AND-ACCOUNTS.md §1). See A10.
@@ -615,7 +616,7 @@ Each assumption goes into the pull request (TICKET-ANALYSIS §5).
 | A8 | Configuration is authoritative for clients. The sync upserts configured clients and disables any removed from configuration. This deliberately overrides SERVICE-API-PATTERNS.md §8's "never overwrite", because §8 protects edits admins make at runtime, and v1 has none; meanwhile a stale row for a removed client would keep accepting its secret | AC5; SERVICE-API-PATTERNS.md §8 |
 | A9 | The MCP token contract: `typ` `at+jwt`; `iss` as in A1; `aud` set to the single requested resource; `sub` = `ApplicationUser.Id`; `client_id`; `scope`, space-delimited; `jti`, `iat` and `exp`; and the enriched claims under the names existing tokens carry (AC7 establishes those names). ADR 0005 records it as the contract `AP-MCP-01` validates against | AC4; IDENTITY-AND-ACCOUNTS.md §1; `MCP-AUTHZ` "Token Handling" |
 | A10 | Every refresh rebuilds claims from the user's current state and refuses deleted or locked-out users, as the existing refresh does | IDENTITY-AND-ACCOUNTS.md §1 ("a role change takes effect at the next token"); `TokenService.cs` L77–86 |
-| A11 | Two interaction modes, chosen per deployment by `AuthorizationServer:Interaction:Mode`: `Hosted` (the default; authservice renders sign-in, 2FA and consent) or `External` (the consumer's frontend renders them). `External` requires `AuthorizationServer:Interaction:ExternalUrl`, an absolute https URL validated at startup, and the redirect is always built from that setting, never from the request. The mode is read through options at request time | B3's answer (Konrad, 2026-09-23, quoted in §5.1); P8 (the default works with no frontend at all); SECURITY-REVIEW.md §8 (no open redirect) |
+| A11 | Two interaction modes, chosen per deployment by `AuthorizationServer:Interaction:Mode`: `Hosted` (the default; authservice renders sign-in, 2FA and consent) or `External` (the consumer's frontend renders them). `External` requires `AuthorizationServer:Interaction:ExternalUrl`, an absolute https URL validated at startup, and the redirect is always built from that setting, never from the request. The mode is read through options at request time | B3's answer (Konrad, 2026-09-23, quoted in §5.1); the reading confirmed by Konrad the same day ("Yes, per deployment (Recommended)"); P8 (the default works with no frontend at all); SECURITY-REVIEW.md §8 (no open redirect) |
 | A12 | The External handoff: a pending `AuthorizationInteraction` (CSPRNG handle stored hashed, a 10-minute expiry, what is needed to resume); an HttpOnly, SameSite=Lax cookie binding it to the browser that started it; a bearer-authenticated interaction API (get, accept, deny) on the authenticated trust level; on acceptance, a single-use 60 s ticket that authservice redeems atomically on its own origin before completing the authorization response itself | AC2; SECURITY-REVIEW.md §5 (CSPRNG for anything presentable as proof), §8 (attack scenarios); SERVICE-API-PATTERNS.md §2 (trust levels); the `OAuthExchangeCode` precedent (`OAuthExchangeCodeService.cs`), with redemption made atomic (§4.6) |
 | A13 | authservice, not the frontend, decides what can be granted. Accepting confirms the requested scopes and resource, intersected with the client's allowed lists, and nothing more. The client's display name, redirect host and scope descriptions shown to the user come from authservice's configuration through the interaction API | SECURITY-REVIEW.md §8 (authorization enforced at the resource, not in the UI); FRONTEND-BFF.md §4 ("the middleware is UX, the services are the boundary") |
 
@@ -638,9 +639,18 @@ None yet. An accepted risk names the person who accepted it (TICKET-ANALYSIS §6
 | 3 | The owning bounded context is named, and the ticket is one ticket | **Met** | The context is identity/authservice (P3). The migration baseline landed separately (PR #65). Both interaction modes live in authservice; a consumer that picks External builds its pages in its own repository, as its own work |
 | 4 | Every compliance item at risk is kept, or covered by a recorded decision | **Met** | P4 is kept (committed migration sets, plus an incremental migration). P14 is decided (ADR 0005). Every other item in §3 is kept or covered by A1–A13 or an N assumption |
 
-**Re-decision needed.** B3's answer changed the scope by adding a second interaction mode. FEEDBACK.md §2 has a person re-decide the gate after a scope change; four "met" lines in this document are not the yes. Invoking `/generate-master-prompt docs/analysis/AUTH-MCP-01.md` is that yes (GENERATE-MASTER-PROMPT.md §0).
+**Re-decided.** B3's answer changed the scope by adding a second interaction mode, so FEEDBACK.md §2 had a person re-decide the gate. Konrad did, on 2026-09-23: "Go: prompt + implement (Recommended)". The same day he confirmed A11's reading of B3 ("Yes, per deployment (Recommended)") and authorised merging the implementation once CI is green with no open review comments ("Yes, merge when green").
 
-**Recommendation:** proceed and generate the master prompt. Check A11–A13 against what you meant by B3 first: the External mode is the largest addition in this revision, and the one place this document interprets your words rather than quoting them.
+**Next:** `docs/analysis/AUTH-MCP-01.master-prompt.md`, generated from this revision, then `/implementation-phase`.
+
+**Definition of done**, verbatim from brief §9, so the master prompt can carry it:
+
+- The build is green.
+- Every acceptance criterion is covered by a test at the layer holding the logic.
+- The AC7 regression is proven.
+- `quality-and-process:security-review` has been run over the diff with no open blocking finding.
+- No file is touched outside the analysis table.
+
 ---
 
 ## Revision log
@@ -649,6 +659,7 @@ None yet. An accepted risk names the person who accepted it (TICKET-ANALYSIS §6
 |---|---|---|---|
 | 1, 2026-09-23 | First pass. §2 table for AC1–AC9 with row notes; 12 findings against the brief (F1–F12); blocking questions B1–B3; assumptions N1–N14; D2–D4 confirmed and D1 pending B2; decisions A1–A10; Q3 and Q4 struck; Q1 → B3, Q2 → N1, Q5 → A1 | The brief; `architecture-standards@e794863`; MCP specification 2026-07-28; `CLAUDE-AUTH`, `CLAUDE-TS`, `CLAUDE-HELP`; OpenIddict 7.7.1 source; the read-only exploratory round | B1, B2, B3; confirmation of N1, A1–A10 |
 | 2, 2026-09-23 | Landed Konrad's answers: B1 closed (the migration sets landed in PR #65), B2 answered (amend ADR 0003 through ADR 0005), B3 answered as a scope change (both interaction modes). AC2 rewritten for both modes, files and notes; AC3, AC6, AC8 and AC9 unblocked; A11–A13 added; F7, flags 1/2/9, the §3 P4 and P14 rows, Q1 and D1 updated; out of scope restated. Gate re-tested: all four conditions met, re-decision requested | Konrad's answers in the session (2026-09-23); PR #65 | Konrad's re-decision of the gate; confirmation of N1 and A1–A13 |
+| 3, 2026-09-23 | Recorded Konrad's re-decision of the gate (go), his confirmation of A11's reading of B3, and his authorisation to merge when green. Copied the brief's definition of done into §7, verbatim, for the master prompt to carry. Nothing else changed | Konrad's answers in the session (2026-09-23) | Confirmation of N1, A1–A10, A12 and A13 happens at PR review |
 
 ---
 
