@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Generates (or updates) the EF Core migration set for both providers.
+# Adds an EF Core migration to both providers' migration sets.
 #
 # Migrations are generated from the model, not from a database, so nothing needs to be
 # running: DesignTimeDbContextFactory supplies a placeholder connection string when none is
@@ -9,7 +9,8 @@
 #   scripts/generate-migrations.sh                 # add a migration named by the date
 #   scripts/generate-migrations.sh AddWidgetTable  # add a migration with an explicit name
 #
-# Commit the result. `Database:SchemaMode=Migrate` will not start without it.
+# Commit the result for both providers. CI's Migrations job fails while the model and either
+# set disagree.
 
 set -euo pipefail
 
@@ -30,6 +31,20 @@ if ! dotnet tool run dotnet-ef --version >/dev/null 2>&1; then
   fi
 fi
 
+# dotnet-ef writes its files with a UTF-8 byte-order mark, which .editorconfig forbids, so the
+# format check in CI would reject a freshly generated migration. Only the mark is removed —
+# `dotnet format` would also reformat the generated Designer and snapshot files, and then every
+# later migration would show churn in the snapshot. head/tail/od rather than `sed -i`, whose
+# flags differ between GNU and BSD.
+strip_bom() {
+  local file
+  for file in "$@"; do
+    if [ "$(head -c 3 "$file" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ]; then
+      tail -c +4 "$file" > "$file.nobom" && mv "$file.nobom" "$file"
+    fi
+  done
+}
+
 generate() {
   local provider="$1"
   local project="$2"
@@ -42,6 +57,8 @@ generate() {
     --project "src/${project}" \
     --startup-project src/AuthService \
     --context ApplicationDbContext
+
+  strip_bom "src/${project}/Migrations/"*.cs
 }
 
 generate PostgreSQL AuthService.Migrations.PostgreSQL

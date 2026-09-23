@@ -161,17 +161,17 @@ instance of its own, on Fly.io or otherwise. What it does instead:
 
 ### 1.5. Database schema
 
-The repository **does not include** versioned EF Core migrations — `EnsureCreated` is
-called on startup so the service can be started from scratch on either supported
-database. If you need migrations for a production environment with an evolving schema:
+By default the service calls `EnsureCreated` on startup, so it starts from scratch on either
+supported database with no setup. That creates a schema but never changes one, so a database
+you intend to keep should run the committed EF Core migrations instead:
 
-```bash
-cd src/AuthService
-dotnet ef migrations add InitialCreate
+```
+Database__SchemaMode=Migrate
+Database__MigrationsAssembly=AuthService.Migrations.PostgreSQL   # or AuthService.Migrations.SqlServer
 ```
 
-...and change `DatabaseProviderExtensions.InitializeDatabaseAsync` to call
-`context.Database.MigrateAsync()` instead of `EnsureCreatedAsync()`.
+A database already created by `EnsureCreated` needs a one-time adoption script first. See
+[`docs/schema/README.md`](docs/schema/README.md).
 
 ---
 

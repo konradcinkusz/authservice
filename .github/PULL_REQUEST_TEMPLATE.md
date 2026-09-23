@@ -32,8 +32,9 @@ Say what a consumer has to do. "None" if none.
 ## Schema changes
 
 <!--
-If you changed the model: is there matching DDL in docs/schema/upgrade/ for both PostgreSQL
-and SQL Server? Existing deployments do not get new columns from EnsureCreated.
+If you changed the model: did you add the migration to both providers' sets
+(scripts/generate-migrations.sh <Name>)? CI fails while the model and a set disagree.
+Deployments still on EnsureCreated do not get new columns.
 -->
 
 ## Checklist

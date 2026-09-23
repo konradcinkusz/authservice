@@ -76,39 +76,32 @@ jobs:
       - name: Restore
         run: dotnet restore AuthService.sln
 
-      # The guard that matters once a migration set exists: a model change without a
-      # matching migration is invisible under EnsureCreated and fails at runtime under
-      # Migrate, which is the failure mode issue #17 is about.
+      # A model change without a matching migration is invisible under EnsureCreated and fails
+      # at runtime under Migrate, which is the failure mode issue #17 is about. Both providers
+      # carry a committed set, so a missing one is a failure here rather than a skipped check.
       #
-      # The reference cycle that used to make generating a set impossible is gone —
-      # ApplicationDbContext now lives in AuthService.Data, which the migration assemblies
-      # reference and AuthService references back. `scripts/generate-migrations.sh` works.
-      # This stays a no-op only until someone runs it and commits the result.
+      # `dotnet ef migrations add` writes into each project's Migrations/ folder; the glob has
+      # to look there, or this step passes without checking anything.
       - name: Migrations match the model
         run: |
           set -euo pipefail
 
-          any=false
           for provider in PostgreSQL SqlServer; do
-            if compgen -G "src/AuthService.Migrations.${provider}/*.cs" > /dev/null; then
-              any=true
-
-              echo "── ${provider} ──"
-              DATABASE_PROVIDER="${provider}" \
-              Database__MigrationsAssembly="AuthService.Migrations.${provider}" \
-              dotnet ef migrations has-pending-model-changes \
-                --project "src/AuthService.Migrations.${provider}" \
-                --startup-project src/AuthService \
-                --context ApplicationDbContext
+            if ! compgen -G "src/AuthService.Migrations.${provider}/Migrations/*.cs" > /dev/null; then
+              echo "::error::No migration set for ${provider}. Generate one with scripts/generate-migrations.sh."
+              exit 1
             fi
+
+            echo "── ${provider} ──"
+            DATABASE_PROVIDER="${provider}" \
+            Database__MigrationsAssembly="AuthService.Migrations.${provider}" \
+            dotnet ef migrations has-pending-model-changes \
+              --project "src/AuthService.Migrations.${provider}" \
+              --startup-project src/AuthService \
+              --context ApplicationDbContext
           done
 
-          if [ "$any" = true ]; then
-            echo "Migrations are in sync with the model."
-          else
-            echo "No migration set committed; nothing to verify."
-            echo "Database:SchemaMode stays on EnsureCreated until one exists."
-          fi
+          echo "Migrations are in sync with the model."
 
   docker:
     name: Docker build

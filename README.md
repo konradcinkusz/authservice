@@ -162,7 +162,7 @@ Optional:
 | `ConsentVersions:Terms` / `Privacy` / `Cookies` | Legal document versions users must accept |
 | `Jwt:ExpirationMinutes` / `Jwt:RefreshTokenDays` | Token lifetimes (default 60 minutes / 7 days) |
 | `Database:SchemaMode` | `EnsureCreated` (default), `Migrate`, or `None` — see [Database schema](#database-schema) |
-| `Database:MigrationsAssembly` | Assembly holding migrations when `SchemaMode=Migrate` |
+| `Database:MigrationsAssembly` | `AuthService.Migrations.PostgreSQL` or `AuthService.Migrations.SqlServer`, matching the provider, when `SchemaMode=Migrate` |
 | `Swagger:Enabled` | Serve Swagger UI. Defaults to on in Development, off elsewhere |
 
 ### Security-relevant settings
@@ -221,34 +221,31 @@ docker run -p 8080:8080 \
 | Mode | Behaviour | Use for |
 | --- | --- | --- |
 | `EnsureCreated` (default) | Creates the schema when the database is empty; **does nothing at all when it is not**. | Demos, development, tests |
-| `Migrate` | Applies EF Core migrations from `Database:MigrationsAssembly`. | Production |
+| `Migrate` | Applies EF Core migrations from `Database:MigrationsAssembly`. | Production, and any database you intend to keep |
 | `None` | Nothing — schema applied out of band. | DBA- or job-managed deployments |
 
 `EnsureCreated` is a bootstrap, not an upgrade path: against an existing database it will not
 add columns introduced since it first ran, and the app then fails at runtime against a stale
 schema. The service logs a warning on every startup where this happens.
 
-Migrations are not committed, because one migration set cannot serve both PostgreSQL and SQL
-Server — the generated DDL and the filtered-index expressions differ. Generate a set per
-provider; the projects are already wired up and a design-time factory is included, so no
-database is needed:
+A migration set is committed for each provider — one set cannot serve both, because the
+generated DDL and the filtered-index expressions differ — so running with migrations is two
+settings:
 
-```bash
-scripts/generate-migrations.sh InitialCreate
+```
+Database__SchemaMode=Migrate
+Database__MigrationsAssembly=AuthService.Migrations.PostgreSQL   # or AuthService.Migrations.SqlServer
 ```
 
-or, one provider at a time:
+An existing `EnsureCreated` database moves onto migrations once, with the adoption script in
+`docs/schema/upgrade/`. A model change comes with a migration for both providers:
 
 ```bash
-DATABASE_PROVIDER=PostgreSQL \
-Database__MigrationsAssembly=AuthService.Migrations.PostgreSQL \
-dotnet ef migrations add InitialCreate \
-  --project src/AuthService.Migrations.PostgreSQL \
-  --startup-project src/AuthService
+scripts/generate-migrations.sh AddWidgetTable
 ```
 
-Full procedure, and idempotent upgrade DDL for existing deployments, in
-[`docs/schema/README.md`](docs/schema/README.md).
+Full procedure — adopting an existing database, upgrading one from before v0.2, adding a
+migration — in [`docs/schema/README.md`](docs/schema/README.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
