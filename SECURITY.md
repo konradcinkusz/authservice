@@ -93,7 +93,10 @@ Be aware of the following when evaluating this project:
   forms with antiforgery tokens. Revoking a user's sessions stops MCP refreshes at once. An MCP
   access token already issued stays valid until it expires, 15 minutes by default, because
   resource servers validate it offline and there is no introspection. The token endpoint is
-  rate-limited per client rather than per IP, because all of a client's users can reach it from
-  one egress range. See [ADR 0005](docs/decisions/0005-mcp-authorization-server.md).
+  rate-limited per client, and per user within it, because all of a client's users can reach it
+  from one egress range. A per-address ceiling still applies before the client authenticates, so
+  one machine cannot flood it with wrong secrets. See
+  [ADR 0005](docs/decisions/0005-mcp-authorization-server.md), which also lists the residual
+  risks.
 - Security-relevant configuration is summarised in the service's startup log line, so you can
   confirm from the logs which posture a deployment actually came up in.

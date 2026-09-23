@@ -153,7 +153,16 @@ The consumer's pages are the consumer's work, in its own repository;
   from logout, password reset and change, turning off 2FA, the admin paths, self-delete and the reaper
   — now also revokes the user's MCP authorizations and tokens. A user can disconnect one client with
   `DELETE /api/v1/auth/connected-clients/{clientId}`, which also forgets their consent. Permanent
-  deletion deletes the library's rows, which carry the user id with no foreign key.
+  deletion deletes the library's rows, which carry the user id with no foreign key. A revoked session
+  cannot start a new connection either: its access tokens still authenticate until they expire, as
+  every JWT does, but External mode's accept refuses a token whose refresh-token family is no longer
+  live, and an approval does not complete if the user's sessions were revoked after it was given.
+- **With no client configured, nothing depends on the library's tables.** They arrive with the
+  `AddAuthorizationServer` migration, and a database `EnsureCreated` made before this release lacks
+  them. Revocation, deletion, pruning and the client sync treat a database failure against them as
+  nothing to do while the server is off, so such a deployment upgrades without breaking logout,
+  password changes or account deletion. With a client configured the tables are required, and a
+  failure surfaces.
 - **Key rotation must keep the previous key longer.** The library signs the codes and refresh tokens
   it issues with the RS256 key too. The analysis could not tell whether a rotation would kill every
   MCP connection (F8); the tests settled it: with the retired public key in
@@ -164,26 +173,52 @@ The consumer's pages are the consumer's work, in its own repository;
   client, with only a status row here. An authorization code is a reference whose hash is the lookup
   key; its encrypted payload is stored, but is useless without the client's secret and the PKCE
   verifier, for its 60 seconds.
-- **Rate limiting is per client at the token endpoint.** Every Claude user's token and refresh calls
-  come from Anthropic's egress range, so the endpoint is taken out of the global per-IP limiter and
-  limited per authenticated client instead (`TokenRequestsPerMinute`), in the endpoint itself,
-  because clients authenticate after the rate-limiting middleware runs. The authorization endpoint
-  and the pages use the existing per-IP `auth` policy; the interaction API the `api` policy.
-- **Size.** 7,822 lines of C# under `src/` (migrations excluded) before; 10,387 after, 2,457 of them
-  in the authorization server's controllers, pages, options, sync and wiring, plus 219 lines of
-  Razor markup. ADR 0003's "readable in an afternoon" is harder than it was, and this is the largest
+- **Rate limiting at the token endpoint is per client, then per user.** Every Claude user's token and
+  refresh calls come from Anthropic's egress range, so the endpoint is taken out of the global
+  per-IP bucket and limited per authenticated client (`TokenRequestsPerMinute`), with each user of a
+  client held to a share of it (`TokenRequestsPerUserPerMinute`). Both apply in the endpoint itself,
+  because clients authenticate after the rate-limiting middleware runs. Before that, one address may
+  send as many requests as all clients together may, since authenticating a client costs a PBKDF2
+  derivation. The authorization endpoint and the pages use the existing per-IP `auth` policy; the
+  interaction API the `api` policy.
+- **Configuration stays authoritative over existing grants.** A scope withdrawn from a client is left
+  out of the next token its connections get; a connection to a withdrawn resource ends at its next
+  refresh. Startup also refuses a `Jwt:Issuer` and `Jwt:Audience` that would let authservice's own
+  API accept MCP tokens as its own.
+- **Size.** 7,822 lines of C# under `src/` (migrations excluded) before; 10,574 after, 2,565 of them
+  in the authorization server's own files (controllers, page models, options, sync, sign-in flow,
+  interaction model and wiring), plus 219 lines of Razor markup. ADR 0003's "readable in an afternoon" is harder than it was, and this is the largest
   single addition since the extraction. The feature is off by default, and every line of it sits in
   files named for it.
 - **"MCP" means two things in this repository.** The `integrate` server (`src/AuthService.Mcp`)
   is an MCP server this repository ships; the authorization server issues tokens *to* MCP clients
   for MCP servers other projects run. The README and the runbook say which they mean.
 
-### Residual risks, accepted with the change
+### Residual risks
 
-- **The token endpoint has no pre-authentication limit.** The per-client limit counts requests the
-  library has already accepted; a flood of requests with a valid client id and a wrong secret costs a
-  PBKDF2 verification each, from any number of addresses. The login endpoint has the same exposure
-  behind its per-IP limit. The platform's edge is the backstop.
+Known and not fixed by this change. Each is small, and each is listed so that accepting the change
+is accepting them knowingly. The security review over the change (PR #66) found five issues; all
+five are fixed, and what it left as hardening notes is here.
+
+- **A distributed flood of wrong client secrets.** The per-address limit bounds what one machine
+  can make the service hash; many machines can still add up. The login endpoint has the same
+  exposure. The platform's edge is the backstop.
+- **The Hosted pages' own session outlives logout.** Logout and an admin's revocation do not end
+  it; it lapses within 20 minutes, in the same browser. A password change or reset, a lockout and
+  account deletion end it at once.
+- **A leaked External-mode handle.** Whoever holds a pending interaction's handle can approve it
+  with their own account, connecting the victim's client to the attacker's data, if the victim's
+  browser then follows the attacker's link within 60 seconds. The browser binding stops a forwarded
+  link but not this. The runbook tells the consumer's page to treat the handle as a secret.
+- **Consent is remembered per client and scopes, not per resource,** and the consent page does not
+  name the resource. It matters only for a client allowed more than one resource.
+- **Cookies scoped with `__Secure-` and `Path=/connect`, not `__Host-`.** A compromised sibling
+  subdomain could plant cookies for these paths.
+- **Per-address limits key on the full IPv6 address,** as the existing ones do, so an address block
+  counts as many addresses.
+- **A lockout ends a user's MCP connections.** Anyone who knows the address can lock an account for
+  five minutes, and the next refresh then revokes the chain, as the existing refresh does.
+- **The client-secret check counts bytes, not entropy.** The runbook generates 256 random bits.
 - **Concurrent refreshes may trip replay detection (N3).** With a reuse leeway of zero, a client that
   refreshes twice with the same token revokes its own chain and must reconnect. Claude refreshes on a
   401 and ahead of expiry; `oauth.refresh.reuse_detected` audit rows will show whether it happens,

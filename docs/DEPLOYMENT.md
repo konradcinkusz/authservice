@@ -155,7 +155,8 @@ empty — the default — the authorization server's endpoints, pages and metada
 - **The schema.** The authorization server's tables arrive as the `AddAuthorizationServer`
   migration. A database created by `EnsureCreated` on an earlier release does not get them:
   move it onto migrations first ([schema/README.md](schema/README.md#moving-an-existing-database-onto-migrations)),
-  then run with `Database__SchemaMode=Migrate`.
+  then run with `Database__SchemaMode=Migrate`. Until a client is configured, nothing needs them:
+  such a database keeps working after the upgrade, logout and deletion included.
 - **Trusted forwarded headers.** The library refuses plain-http requests to its endpoints. Behind
   a TLS-terminating proxy the app sees http unless it trusts `X-Forwarded-Proto` from that proxy:
   configure `Network__KnownProxies` / `Network__KnownNetworks`, or `Network__TrustAllProxies=true`
@@ -218,11 +219,13 @@ AuthorizationServer__EncryptionKey=<encryption key>                    # secret
 | `AllowedResources` | The MCP server's canonical URI: lowercase scheme and host, no trailing slash, no fragment. Every token is bound to exactly one, in `aud`. Give the MCP endpoint a path such as `/mcp` |
 | `Scopes:<n>:Name` / `Description` | What the consent step shows for each scope. A list, because `:` cannot appear in a configuration key |
 | `TokenRequestsPerMinute` | Optional, default 1200: this client's token-endpoint limit, across all its users |
+| `TokenRequestsPerUserPerMinute` | Optional, default 30: one user's share of it, so that someone who holds the client secret cannot spend everyone else's budget. A connection refreshes a few times an hour |
 | `AuthorizationCodeLifetimeSeconds`, `AccessTokenLifetimeMinutes`, `RefreshTokenLifetimeDays` | Optional, under `AuthorizationServer__`; defaults 60, 15 and 30 (sliding) |
 
 Startup refuses anything unsafe — a short or missing secret, an http redirect URI, a resource
-with a fragment, no `offline_access`, HS256, no issuer, no encryption key — with a message naming
-the setting. Configuration is authoritative: at every start the client is created or brought up
+with a fragment, no `offline_access`, HS256, no issuer, no encryption key, or a `Jwt__Issuer` and
+`Jwt__Audience` equal to the issuer and a resource, which would let authservice's own API accept
+MCP tokens — with a message naming the setting. Configuration is authoritative: at every start the client is created or brought up
 to date, and a client you remove is deleted together with every authorization and token it held.
 
 Check the result:
@@ -299,12 +302,26 @@ page's absolute https URL. The contract it works to:
 The ticket works only in the browser that started the request, which carries an authservice cookie
 for it: a link forwarded to anyone else fails. The API is server-to-server, so it needs no CORS.
 
+Two things are the page's to get right:
+
+- **Treat the handle as a secret for its ten minutes.** Whoever holds it can approve the request
+  with their own account, and the victim's browser would then connect the client to the attacker's
+  data. Serve the page with `Referrer-Policy: no-referrer`, and keep its query string out of logs,
+  analytics and error reports.
+- **Call the API with a token from a live session.** A token whose session has since been revoked
+  (logout, password change, an admin's revocation) still authenticates elsewhere until it expires,
+  but `accept` and `deny` refuse it with `401` and `invalid_token`. Refresh the session or sign the
+  user in again, then retry. An approval also lapses if the user's sessions are revoked before the
+  browser comes back with the ticket.
+
 ### Revocation and rotation
 
 - Logout, a password reset or change, the admin revocation paths and account deletion end a user's
   MCP connections along with their other sessions. `DELETE /api/v1/auth/connected-clients/{clientId}`,
   with the user's token, disconnects one client and forgets their consent. An access token already
   issued stays valid until it expires, at most `AccessTokenLifetimeMinutes` later.
+- The Hosted pages' own sign-in session is not ended by logout or an admin's revocation; it lapses
+  within 20 minutes. A password change or reset, a lockout and account deletion do end it.
 - **Rotating the signing key** is the usual rolling change, with one difference: the library signs
   its codes and refresh tokens with the same key, so keep the old public key in
   `Jwt__PreviousPublicKeyPem` for a **refresh-token lifetime** (30 days by default), not an
@@ -322,8 +339,14 @@ for it: a link forwarded to anyone else fails. The API is server-to-server, so i
   (`OAuth__ErrorRedirectBaseUrl`), not back on authservice's. And with the legacy
   `Auth__AllowTokensInOAuthRedirect` on, the Hosted pages cannot use external providers at all.
 - Every Claude user's token and refresh calls come from Anthropic's egress range (`160.79.104.0/21`),
-  so the token endpoint is limited per client, not per IP. A firewall in front of this service
-  has to let that range through, to the discovery and token endpoints as well as the MCP server.
+  so the token endpoint is limited per client, and per user within it, rather than per IP. One
+  address may still send only as many token requests a minute as all clients together may, which
+  bounds a flood of wrong secrets from one machine; a distributed one is for your edge to stop. A
+  firewall in front of this service has to let that range through, to the discovery and token
+  endpoints as well as the MCP server.
+- A scope or resource you withdraw from a client takes effect on its existing connections at their
+  next refresh: a withdrawn scope is left out of the new token, and a connection to a withdrawn
+  resource ends.
 
 ## A note on shape
 

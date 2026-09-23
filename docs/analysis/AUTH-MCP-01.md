@@ -1,6 +1,6 @@
 # AUTH-MCP-01: ticket analysis
 
-> **Revision 5**, 2026-09-23. Lands what the tests and the documentation found (§5.4, I10–I15): four library facts the tests drove out, one of them settling F8, and one operational dependency. None changes scope, so the gate stands without a re-decision. Revision 4 landed the implementation phase's findings made before any production change (§5.4, I1–I9). Revision 3 recorded Konrad's re-decision of the gate; revision 2 landed his answers to B1–B3 (§5.1); revision 1 was the first pass of `/ticket-analysis`.
+> **Revision 6**, 2026-09-23. Lands what the security review of the change found (§5.4, I16–I21): five findings, all fixed with a test each, and one hardening note closed. None changes scope or names a new file, so the gate stands without a re-decision; the definition of done's security-review item is now met (§7). Revision 5 landed what the tests and the documentation found (I10–I15). Revision 4 landed the implementation phase's findings made before any production change (§5.4, I1–I9). Revision 3 recorded Konrad's re-decision of the gate; revision 2 landed his answers to B1–B3 (§5.1); revision 1 was the first pass of `/ticket-analysis`.
 > **Gate: decided, go.** All four conditions are met (§7), and Konrad re-decided the gate after revision 2's scope change: "Go: prompt + implement (Recommended)", 2026-09-23.
 > **Ticket:** the AUTH-MCP-01 brief, "authservice as an OAuth 2.1 authorization server for MCP connectors", as pasted into the session on 2026-09-23. Appendix A holds its acceptance criteria verbatim. If the tracker id changes, this file keeps its name until it is renamed.
 > **Downstream:** `AP-MCP-01` (AureliusPromptus MCP connector) is blocked on this ticket.
@@ -147,6 +147,7 @@ These are part of the table and travel with it into the master prompt.
 4. On the user's decision, the BFF calls `POST /api/v1/oauth/interactions/{handle}/accept` or `…/deny` with the same token. authservice binds the interaction to that user and returns a `redirectTo` on its own origin carrying a single-use ticket: hashed, 60 s, the `OAuthExchangeCode` shape.
 5. The browser follows `redirectTo`. authservice redeems the ticket **atomically** (a conditional update, unlike `OAuthExchangeCodeService.RedeemAsync`, §4.6), checks it belongs to the interaction this browser's cookie names, and completes the authorization response with a code and `iss`. A denial completes with `access_denied`.
 - The frontend can accept or deny only what was requested and allowed; it cannot add a scope or a resource (A13).
+- *(Revision 6, I16.)* Deciding needs a bearer token from a session that is still alive. A product access token outlives its session's revocation until it expires, and without this a stolen one could mint a 30-day grant after the victim changed their password. The token carries no `iat`, so it is tied to its session through the refresh token issued with it: the family must still hold a live refresh token. An approval also lapses if the user's sessions are revoked between the decision and the ticket's redemption.
 - The interaction API is bearer-authenticated, on the authenticated trust level (SERVICE-API-PATTERNS.md §2), under the `api` rate-limit policy. It needs no CORS, because a BFF calls it server-side (FRONTEND-BFF.md §1).
 - The browser-binding cookie defeats login CSRF: without it, an attacker could finish a victim's flow with a ticket issued to the attacker's own account, and the victim's Claude would be connected to the attacker's data.
 - The consumer's pages live in the consumer's repository (out of scope). The runbook documents the contract they call (AC9).
@@ -185,6 +186,7 @@ These are part of the table and travel with it into the master prompt.
   | `AuthorizationServer:PreviousEncryptionKeys:<n>` | platform secret, decryption only, for a rolling rotation (A4) |
   | `AuthorizationServer:AuthorizationCodeLifetimeSeconds`, `…:AccessTokenLifetimeMinutes`, `…:RefreshTokenLifetimeDays` | lifetimes (N1) |
   | `…:Clients:0:TokenRequestsPerMinute` | that client's token-endpoint limit (N4) |
+  | `…:Clients:0:TokenRequestsPerUserPerMinute` | one user's share of it (N4; *revision 6*, I18) |
   | `AuthorizationServer:Interaction:Mode`, `…:ExternalUrl` | the interaction mode (A11) |
 
 - Startup validation fails with a message naming the setting (the ADR 0002 posture) unless all of these hold:
@@ -193,7 +195,8 @@ These are part of the table and travel with it into the master prompt.
   - resources are absolute https URIs with no fragment (`MCP-AUTHZ` "Canonical Server URI");
   - `offline_access` is allowed (F5);
   - the signing algorithm is RS256 (A3);
-  - the issuer is set (A1).
+  - the issuer is set (A1);
+  - *(revision 6, I20)* `Jwt:Issuer` and `Jwt:Audience` are not the issuer and one of a client's resources, which would let the product API accept MCP tokens.
 - The sync hosted service waits for `IMigrationCompletionSignal` (SERVICE-API-PATTERNS.md §7; `UserCleanupService.cs` L33 shows the pattern) and treats configuration as authoritative (A8).
 - The library stores client secrets hashed: PBKDF2-SHA256 with 10,000 iterations (`OpenIddictApplicationManager.cs` L1714–1722). Recorded here as SECURITY-REVIEW.md §5 asks.
 - Claude's entry uses the redirect URI `https://claude.ai/api/mcp/auth_callback` (N8).
@@ -208,7 +211,7 @@ These are part of the table and travel with it into the master prompt.
   | admin role changes, lock, revoke-sessions, soft-delete | `AdminController.cs` L210, L241, L285, L335, L370 |
   | the permanent-deletion reaper | `UserCleanupService.cs` L79 |
 
-- The library's stores must be registered even when no client is configured, and their tables must exist in every database, including the test host's. Otherwise the extended operation breaks the existing `PasswordChangeTests` (A5).
+- The library's stores must be registered even when no client is configured, and their tables must exist in every database, including the test host's. Otherwise the extended operation breaks the existing `PasswordChangeTests` (A5). *(Revision 6, I21.)* Not every database: one `EnsureCreated` made before this release lacks them. While no client is configured, a database failure against them is taken to mean there is nothing to revoke, delete or prune, so such a deployment keeps working; with a client configured the tables are required and a failure surfaces.
 - Access tokens already issued stay valid until they expire (D4). The short MCP access-token lifetime (N1) is what contains them.
 - Permanent deletion removes the user's MCP rows. The library stores the user id as a plain subject string with no foreign key, so the cascade that clears `RefreshTokens` (`ApplicationDbContext.cs`) doesn't reach them (IDENTITY-AND-ACCOUNTS.md §8).
 - Per-client revocation needs an authenticated user, touches only that user's own authorizations, and writes an audit event (N5).
@@ -387,13 +390,13 @@ The compliance checklist is walked only for the layers the table names (TICKET-A
 
 | Item | Status |
 |---|---|
-| Rate limiting partitioned by user with an IP fallback; `auth`, `api` and global policies; a uniform 429 body | **Decided (N4)**, because of F10 |
+| Rate limiting partitioned by user with an IP fallback; `auth`, `api` and global policies; a uniform 429 body | **Decided (N4)**, because of F10. *(Revision 6.)* The token endpoint: per address before authentication, then per client and per user (I17, I18) |
 | Anonymous surfaces: one client resolver; rejections not queued | The new policies use `ResolveClientIp` and `QueueLimit = 0`. The existing `auth` policy queues 5 (`Program.cs` L336); that predates this ticket and isn't made worse |
 | Endpoint groups make trust levels visible | **Kept.** The extension groups endpoints by trust level: anonymous (metadata, authorize, token, sign-in pages), AS cookie (consent), and bearer (connected clients) |
 | Background services wait for the migration completion signal | **Kept.** Client sync (AC5) and pruning (AC3) |
 | Seeded definitions: insert if missing, never overwrite | **Deliberately different** (A8) |
 | Deny by default, with a short `[AllowAnonymous]` list and an endpoint × role matrix | The anonymous list gains the metadata, authorize and token endpoints and the sign-in pages. They get listed in `docs/roles.md` (AC6, AC9). The External interaction API is authenticated, not anonymous |
-| Findings stated as attack scenarios (the External mode's handoff) | **Decided (A12, A13).** Login CSRF is stopped by the browser-binding cookie; ticket replay by atomic single-use redemption; scope widening by accepting only what was requested and allowed |
+| Findings stated as attack scenarios (the External mode's handoff) | **Decided (A12, A13).** Login CSRF is stopped by the browser-binding cookie; ticket replay by atomic single-use redemption; scope widening by accepting only what was requested and allowed. *(Revision 6.)* The security review over the diff stated its five findings that way; all are fixed (I16–I19, I21), and its hardening notes are ADR 0005's residual risks |
 | No tokens in web storage; cookies set server-side; the header set on every page | The AS cookie is HttpOnly, Secure, SameSite=Lax and scoped to its paths. The AS pages send the header set (AC2) |
 | CSPRNG for anything a caller can present as proof | Codes and tokens are generated by the library. Client secrets are generated as the runbook instructs (IDENTITY-AND-ACCOUNTS.md §10) |
 | Encode at render time | Razor encodes by default. Client names and scope descriptions come from configuration, which is trusted |
@@ -485,6 +488,7 @@ OpenIddict 7.7.1, read in source.
 | *(Revision 4.)* The issuer is written as `Uri.AbsoluteUri`, which ends an origin in `/`; the configuration endpoint's document also carries OIDC fields (claims, identity-token algorithms, subject types, prompt values) | `OpenIddictServerHandlers.cs` L3711–3717; `…Discovery.cs` L230; `…Authentication.cs` L2246 | A1 (trailing slash trimmed), and `MCP-DISC`'s identical-issuer rule for a protected-resource document that lists the origin | The library's configuration endpoint is off entirely. authservice serves the RFC 8414 document from the AS options, and two event handlers write A1's form into the authorization response's `iss` and the access token's `iss`. The library's own validation accepts both forms (`…Protection.cs` L191–202) |
 | *(Revision 5.)* The access token keeps the library's private `oi_*` claims | Found by `AccessTokenTests` | A9 ("nothing else"), and it would publish internal identifiers to every resource server | A handler removes every `oi_*` claim from access tokens (I10) |
 | *(Revision 5.)* A token request's `resource` is checked against the client's permissions, not against the grant; outside the permissions it is `invalid_request` | Found by `AuthorizationFlowTests` | AC3 and RFC 8707 §2.2 (`invalid_target` for a resource the grant does not cover) | The token passthrough checks the requested resource against the grant's resources (I11) |
+| *(Revision 6.)* A refresh issues the grant's scopes and resources as they were; the client's current permissions are checked only against a `scope` or `resource` the request names, which clients usually omit | Found by the security review | A8 (configuration is authoritative) | The token passthrough narrows scopes to the client's current ones and ends a grant for a withdrawn resource (I19) |
 
 Defaults the library gets right, which should stay:
 - `iss` in authorization responses, and its metadata flag (`OpenIddictServerHandlers.Discovery.cs` L859).
@@ -506,6 +510,7 @@ None of these is in scope; they are recorded so they aren't lost.
 - *(Revision 4.)* The 403 branch in `AuthController.Login` (L247–254) cannot be reached while one setting drives both switches: with confirmation enforced, Identity's pre-sign-in check refuses an unconfirmed account before the password is checked, and the caller gets the generic 401 (`SignInCharacterizationTests` pins it). `SignInFlow` keeps the behaviour, and N6's citation now points here.
 - *(Revision 4.)* A failed external sign-in started from the AS sign-in page ends on the product frontend's login page, because `ExternalAuthController` sends failures to `OAuth:ErrorRedirectBaseUrl` and stays unchanged by design. The runbook says so.
 - *(Revision 4.)* With the legacy `Auth:AllowTokensInOAuthRedirect` on, the callback carries tokens rather than a code, so the AS pages cannot resume an external sign-in. They refuse it with a message rather than accept tokens in their own URL.
+- *(Revision 6.)* The library's `PruneAsync` catches a failing batch and tries again, up to 1,000 times, then reports every failure in one `AggregateException`. Against a database without its tables that is 1,000 failing queries per store per run, so while no client is configured the reaper does not ask it to prune (I21).
 - Names already taken, to avoid colliding with:
   - `OAuth:*` (the Google and GitHub settings);
   - `UserConsent` and `ConsentType` (legal consent);
@@ -581,7 +586,7 @@ Each assumption goes into the pull request (TICKET-ANALYSIS §5).
 | N1 | Lifetimes and scope naming (brief Q2) | **Lifetimes:** code 60 s (as `OAuthExchangeCode.DefaultLifetime`); MCP access token 15 min; refresh token 30 days, sliding; all configurable. Existing tokens stay at 60 min and 7 days. The 15 minutes has three grounds: IDENTITY-AND-ACCOUNTS.md §1 (staleness until refresh); ADR 0004's second property ("a long time for a credential sitting in an autonomous process"); and D4, which means an issued JWT can't be recalled, so its lifetime is the containment. Claude refreshes on a 401, and proactively up to 5 min before expiry (`CLAUDE-AUTH` "Token refresh"). **Scopes:** opaque strings configured per client. The recommended form is lowercase `<area>:<action>`, matching `MCP-AUTHZ`'s `files:read`, plus `offline_access` (F5). The naming convention belongs to `AP-MCP-01`, because the resource server enforces scopes (`MCP-AUTHZ` "Scope Selection Strategy") |
 | N2 | Is consent remembered? | Yes. It is explicit, remembered per user and client for the granted scopes, and asked again when new scopes are requested. AC6 revocation forgets it |
 | N3 | Refresh-token reuse leeway | 0 (IDENTITY-AND-ACCOUNTS.md §2 "single-use"). The risk: Claude's concurrent refreshes (reactive plus proactive) could trip replay detection and revoke the chain, forcing a reconnect. Watch the reuse audit event, and revisit through `/ticket-feedback` with evidence |
-| N4 | Rate-limit partitions | The authorize endpoint and sign-in pages use the `auth` policy, per IP, because the callers are browsers. The token endpoint is partitioned by the authenticated `client_id`, with a limit sized to that client's users, and rejections are not queued (SERVICE-API-PATTERNS.md §1). It is kept out of the global per-IP bucket (`Program.cs` L354–364), because all Claude calls come from one range (F10). *(Revision 5, I12.)* The library authenticates the client inside the token passthrough, after the rate-limiting middleware has run, so the per-client limit is applied in the passthrough and counts only requests from an authenticated client. A request with a wrong secret meets no limit at authservice. That is a residual risk, recorded in ADR 0005, with the platform's edge as the backstop |
+| N4 | Rate-limit partitions | The authorize endpoint and sign-in pages use the `auth` policy, per IP, because the callers are browsers. The token endpoint is partitioned by the authenticated `client_id`, with a limit sized to that client's users, and rejections are not queued (SERVICE-API-PATTERNS.md §1). It is kept out of the global per-IP bucket (`Program.cs` L354–364), because all Claude calls come from one range (F10). *(Revision 5, I12.)* The library authenticates the client inside the token passthrough, after the rate-limiting middleware has run, so the per-client limit is applied in the passthrough and counts only requests from an authenticated client. A request with a wrong secret meets no limit at authservice. That is a residual risk, recorded in ADR 0005, with the platform's edge as the backstop. *(Revision 6, I17, I18.)* No longer so: the endpoint keeps a per-address limit before authentication, set to what all clients together may send, and within a client each user gets a share (`TokenRequestsPerUserPerMinute`, default 30). What remains is a distributed flood |
 | N5 | What "traced" means (brief §7) | Audit events (new `AuditAction` constants for consent granted or denied, client revoked, and refresh reuse) plus structured logs. No code, token, secret or verifier is logged: the library's request logging runs at Warning in production (§4.5), and a log-capture test enforces it. OTLP stays an open row in `DEVIATIONS.md` (L16) |
 | N6 | A user whose accepted legal-consent versions are stale (IDENTITY-AND-ACCOUNTS.md §9) | The AS sign-in refuses, with an instruction to accept the new versions in the product. authservice gets no terms UI. Unconfirmed emails are refused as they are today, by Identity's pre-sign-in check, with the generic failure (§4.6, revision 4) |
 | N7 | Registration and password reset on the AS pages | Neither is offered; the pages link to the product (`FrontendBaseUrl`) |
@@ -603,9 +608,9 @@ Each assumption goes into the pull request (TICKET-ANALYSIS §5).
 | ~~Q4: Which discovery document does Claude request?~~ | Answered from `CLAUDE-TS`: RFC 8414 first, then OIDC discovery as a fallback, and one is enough. → A2 |
 | Q5: What is the public issuer URL in each environment? | **Proposed → A1.** The issuer is `Jwt:PublicBaseUrl`, and its per-environment value is the deploying system's configuration (ADR 0001; SHARED-SERVICE-REUSE.md §4). Open until confirmed |
 
-### 5.4 Findings from the implementation phase (revisions 4 and 5)
+### 5.4 Findings from the implementation phase (revisions 4 to 6)
 
-Landed through `/ticket-feedback` (FEEDBACK.md), stated as they were found. I1–I9 (revision 4) are facts about the library and the code found before any production change; I10–I15 (revision 5) are what the tests and the documentation found afterwards. Each is a correction or new information, not a scope change, so no condition in §7 needs a person's re-decision.
+Landed through `/ticket-feedback` (FEEDBACK.md), stated as they were found. I1–I9 (revision 4) are facts about the library and the code found before any production change; I10–I15 (revision 5) are what the tests and the documentation found afterwards; I16–I21 (revision 6) are what the security review over the diff found, each fixed with a test. Each is a correction or new information, not a scope change, so no condition in §7 needs a person's re-decision.
 
 | # | Finding, as found | Kind | Lands in |
 |---|---|---|---|
@@ -624,6 +629,12 @@ Landed through `/ticket-feedback` (FEEDBACK.md), stated as they were found. I1�
 | I13 | "A refresh token issued before a signing-key rotation redeems with the retired key in `Jwt:PreviousPublicKeyPem`, and fails without it." | Closes F8 | F8; AC4 notes; §3; the runbook and README rotation text |
 | I14 | "Refresh-token and access-token rows hold no payload and no reference; an authorization code's row holds its reference's hash and an encrypted payload." | Closes an open obligation | §3 (IDENTITY-AND-ACCOUNTS.md §12 row) |
 | I15 | "The pages' cookies (session, two-factor challenge, external resume, binding) are protected with ASP.NET Core Data Protection, as the existing external sign-in's are: a restart mid-sign-in, or a second instance without a shared key ring, makes the user start again." | New information | The runbook ("Things to know"); ADR 0005's residual risks |
+| I16 | "External mode: a bearer token issued before a revocation can still create a new MCP grant." (Medium) | Security finding, fixed | AC2 notes (External); ADR 0005; the runbook's External contract |
+| I17 | "`/connect/token` has no per-IP or pre-authentication limit, so one source can exhaust CPU." (Medium) | Security finding, fixed | N4; ADR 0005; the runbook |
+| I18 | "One grant holder can exhaust the client's whole token budget." (Low) | Security finding, fixed | N4; AC5 notes; the runbook |
+| I19 | "A scope or resource removed from config keeps being issued on refresh." (Low) | Security finding, fixed | §4.5; ADR 0005; the runbook |
+| I20 | "Token confusion is prevented only by configuration." (hardening note) | Closed | AC5 notes (startup validation) |
+| I21 | "Upgrading a default-mode database breaks deletion and revocation paths", with the feature off. (Low) | Security finding, fixed | AC6 notes; §4.6; ADR 0005; the runbook |
 
 ---
 
@@ -691,6 +702,8 @@ None yet. An accepted risk names the person who accepted it (TICKET-ANALYSIS §6
 
 **Revision 5 re-test.** The four conditions are still met. I10–I15 add notes and close F8 and one §3 obligation; none changes scope, adds a criterion or names a new file, so FEEDBACK.md §2 asks for no re-decision. The master prompt is generated again from this revision.
 
+**Revision 6 re-test.** The four conditions are still met. I16–I21 fix what the security review found inside the files the table already names; none changes scope, adds a criterion or names a new file, so FEEDBACK.md §2 asks for no re-decision. Konrad chose to fix every finding before merging ("Fix all, then merge (Recommended)", 2026-09-23). The definition of done's security-review item is met: `quality-and-process:security-review` ran over the diff, its record is in PR #66, and no blocking finding is open. The master prompt is generated again from this revision.
+
 ---
 
 ## Revision log
@@ -702,6 +715,7 @@ None yet. An accepted risk names the person who accepted it (TICKET-ANALYSIS §6
 | 3, 2026-09-23 | Recorded Konrad's re-decision of the gate (go), his confirmation of A11's reading of B3, and his authorisation to merge when green. Copied the brief's definition of done into §7, verbatim, for the master prompt to carry. Nothing else changed | Konrad's answers in the session (2026-09-23) | Confirmation of N1, A1–A10, A12 and A13 happens at PR review |
 | 4, 2026-09-23 | Landed the implementation phase's findings I1–I9 (§5.4): the scope-description configuration shape (AC5 notes); four library facts in §4.5, with their overrides; the browser binding of a Hosted external sign-in (AC2 notes); `UseSetting` for the new project's hosts (AC8 notes, N14); three observations in §4.6 and N6's corrected citation. Gate re-tested, still met; no re-decision needed | The implementation phase's reading of `openiddict-core@7.7.1` and the code, before any production change; `SignInCharacterizationTests` | Confirmation of N1, A1–A10, A12 and A13 happens at PR review |
 | 5, 2026-09-23 | Landed I10–I15 (§5.4): two library facts in §4.5 with their overrides (the `oi_*` claims, the token endpoint's resource check), in AC4 and AC3 notes; the per-client limit's reach (N4); F8 settled and the §3 rotation row kept; the stored-token obligation confirmed; the Data Protection dependency. AC9 notes record the README's Features line and rotation text; §4.6's `SECURITY.md` observation resolved in passing. Gate re-tested, still met; no re-decision needed | `tests/AuthService.AuthorizationServer.Tests` (192 tests green with the rest of the suite); writing ADR 0005 and the runbook | Confirmation of N1, A1–A10, A12 and A13 happens at PR review |
+| 6, 2026-09-23 | Landed the security review's findings I16–I21 (§5.4), all fixed with a test each: revoked sessions cannot approve External connections (AC2 notes); a per-address limit before authentication and a per-user share at the token endpoint (N4, AC5 notes); withdrawn scopes and resources narrow existing grants (§4.5); startup refuses an API issuer and audience that would accept MCP tokens (AC5 notes); with the feature off, nothing depends on the library's tables (AC6 notes, §4.6). §3 rows updated; gate re-tested, still met; no re-decision needed | The security review over `origin/main...HEAD` (PR #66); Konrad's choice to fix before merging (2026-09-23) | Confirmation of N1, A1–A10, A12 and A13 happens at PR review |
 
 ---
 

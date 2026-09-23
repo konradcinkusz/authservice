@@ -97,9 +97,9 @@ organization role. Each acts for the signed-in user, on that user's own account.
 | --- | --- | --- |
 | `GET /.well-known/oauth-authorization-server` | Anyone | Anonymous. Public metadata |
 | `GET/POST /connect/authorize` | The user's browser, sent by a registered client | Anonymous, because it is where sign-in starts. It serves only registered clients, redirects only to their exact redirect URIs, and requires PKCE |
-| `POST /connect/token` | A registered client | The client's secret, plus a code and its PKCE verifier or a refresh token. Rate-limited per client |
+| `POST /connect/token` | A registered client | The client's secret, plus a code and its PKCE verifier or a refresh token. Rate-limited per address before the client authenticates, then per client and per user |
 | `/connect/signin`, `/connect/2fa`, `/connect/consent`, `/oauth/callback` (Hosted mode) | The user's browser | Anonymous, because these pages are the sign-in. Every form carries an antiforgery token |
-| `GET /api/v1/oauth/interactions/{handle}`, `POST …/accept`, `…/deny` (External mode) | The consumer's BFF, with the user's token | Any authenticated user holding the handle. The first user to decide an interaction is the only one who can. A decision grants only what the client asked for and is allowed |
+| `GET /api/v1/oauth/interactions/{handle}`, `POST …/accept`, `…/deny` (External mode) | The consumer's BFF, with the user's token | Any authenticated user holding the handle. Deciding also needs a token from a session that has not been revoked. The first user to decide an interaction is the only one who can. A decision grants only what the client asked for and is allowed |
 | `DELETE /api/v1/auth/connected-clients/{clientId}` | The user | Any authenticated user, for their own connections only |
 
 ## Token claims
