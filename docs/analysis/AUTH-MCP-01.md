@@ -1,7 +1,7 @@
 # AUTH-MCP-01: ticket analysis
 
-> **Revision 1**, 2026-09-23. First pass of `/ticket-analysis`.
-> **Gate: not met.** Three questions are blocking (§5.1). §7 reports the four conditions and a recommendation.
+> **Revision 2**, 2026-09-23. Lands Konrad's answers to B1–B3 (§5.1). Revision 1 was the first pass of `/ticket-analysis`.
+> **Gate: all four conditions met (§7), awaiting Konrad's re-decision.** B3's answer changed scope, adding a second interaction mode, and FEEDBACK.md §2 says a scope change is re-decided by a person, not by this document.
 > **Ticket:** the AUTH-MCP-01 brief, "authservice as an OAuth 2.1 authorization server for MCP connectors", as pasted into the session on 2026-09-23. Appendix A holds its acceptance criteria verbatim. If the tracker id changes, this file keeps its name until it is renamed.
 > **Downstream:** `AP-MCP-01` (AureliusPromptus MCP connector) is blocked on this ticket.
 > **Precedence:** once accepted, this document wins over the brief (brief §10). A disagreement goes back through `/ticket-feedback` and is not settled mid-implementation.
@@ -40,23 +40,23 @@ Before anything else, confirmed that each source could be opened in this session
 
 **Owning bounded context (P3): identity, meaning authservice.** Confidence is high. Everything the ticket asks for is token issuance, sign-in and consent for users this service already owns. The MCP server that consumes the tokens belongs to another context and another ticket (`AP-MCP-01`, brief §6). Each consuming system runs its own instance with its own key (SHARED-SERVICE-REUSE.md §1). The authorization server is therefore per instance, and nothing here makes authservice a central shared server.
 
-**Is this one ticket?** By P3's test, yes: one context, one service, one database. Two open questions could still split it, so §7 treats the condition as unmet until they close:
-- **B1:** there is no migration set for the schema change to join. The baseline is separate work (issue #17).
-- **B3:** if sign-in and consent render in a consumer's frontend, a second repository is involved.
+**Is this one ticket?** Yes, by P3's test: one context, one service, one database. Revision 1 named two things that could split it; both are now settled:
+- ~~**B1:** there is no migration set for the schema change to join.~~ The baseline landed on its own in PR #65 (issue #17). This ticket adds one incremental migration per provider on top of it.
+- ~~**B3:** if sign-in and consent render in a consumer's frontend, a second repository is involved.~~ authservice provides both modes (A11). A consumer that picks External builds its own pages, in its own repository, as its own work. Nothing in this ticket touches another repository.
 
 **Principle-level flags** (TICKET-ANALYSIS §1)
 
 | # | What the ticket needs | Principle | Evidence | Status |
 |---|---|---|---|---|
-| 1 | New tables for clients, authorizations and tokens, "added via migrations" (brief §7), with no migration set to add them to | P4 | Neither `src/AuthService.Migrations.PostgreSQL` nor `src/AuthService.Migrations.SqlServer` contains a migration or a model snapshot. `docs/architecture/DEVIATIONS.md` L18: "No committed migration set … To fix". `docs/schema/README.md` L113–118 still prescribes hand-written upgrade DDL | **Open → B1** |
-| 2 | An authorization endpoint, a token endpoint, a consent screen, client registration, and OpenIddict | P14 (decisions are recorded, and are reversed only by another recorded decision) | ADR 0003 L36–38 excludes exactly these and says "re-adding OpenIddict would undo the extraction decision". ADR 0004 L132 and L137–138 restate the exclusion for "third-party, browser-facing clients" | **Open → B2** |
+| 1 | New tables for clients, authorizations and tokens, "added via migrations" (brief §7), with no migration set to add them to | P4 | Neither `src/AuthService.Migrations.PostgreSQL` nor `src/AuthService.Migrations.SqlServer` contains a migration or a model snapshot. `docs/architecture/DEVIATIONS.md` L18: "No committed migration set … To fix". `docs/schema/README.md` L113–118 still prescribes hand-written upgrade DDL | ~~Open → B1~~ **Kept.** PR #65 committed the migration sets, and this ticket adds an incremental migration (revision 2) |
+| 2 | An authorization endpoint, a token endpoint, a consent screen, client registration, and OpenIddict | P14 (decisions are recorded, and are reversed only by another recorded decision) | ADR 0003 L36–38 excludes exactly these and says "re-adding OpenIddict would undo the extraction decision". ADR 0004 L132 and L137–138 restate the exclusion for "third-party, browser-facing clients" | ~~Open → B2~~ **Decided:** amend ADR 0003 through ADR 0005 (Konrad, 2026-09-23) |
 | 3 | New secret material: client secrets, plus a token-encryption key the library requires | P5 | `OI` will not start without an encryption credential (`OpenIddictServerConfiguration.cs` L250, `ID0085`) | Decided → A4 |
 | 4 | Resource servers must be able to verify tokens without being able to mint them | P5 ("Exactly one service holds a signing key") | Under HS256 the JWKS is empty by construction (`JwtSigningKeys.cs` L54–78). `OI` will not start without an asymmetric signing key (`OpenIddictServerConfiguration.cs` L255, `ID0086`) | Decided → A3 |
 | 5 | A new public contract (authorization-server metadata and the MCP token shape) for `AP-MCP-01` to build against, while the existing contract stays fixed | P11, AC7 | The existing discovery document is `Program.cs` L472–496, and `JwksEndpointTests.cs` L46 and L59 pin its content | Decided → A1, A2, A9 |
 | 6 | An optional capability that must not change a deployment that doesn't use it | P8 | The same pattern already covers Google and GitHub (`Program.cs` L202–236) and SendGrid (L300–307) | Decided → A5 |
 | 7 | "Authorize and token events are traced" (brief §7), with no tracing pipeline in place | P15 | `DEVIATIONS.md` L16: "No OTLP traces … To fix" | Assumption → N5 |
 | 8 | More wiring in a `Program.cs` that is already a recorded deviation | P9 | `DEVIATIONS.md` L20; `Program.cs` is 530 lines | Kept → A6 |
-| 9 | The identity service rendering HTML for the first time (if B3 = a) | P14 (a recorded stance) | `docs/issue-analysis.md` L235: "requires the service to render HTML, which it otherwise never does". `src/` has no Razor, no views and no `wwwroot` | **Open → B3** |
+| 9 | The identity service rendering HTML for the first time, in Hosted mode | P14 (a recorded stance) | `docs/issue-analysis.md` L235: "requires the service to render HTML, which it otherwise never does". `src/` has no Razor, no views and no `wwwroot` | ~~Open → B3~~ **Decided:** Hosted pages ship, and they are the default mode (Konrad, 2026-09-23; A11). ADR 0005 records that the "renders no HTML" stance changes |
 
 ### 1a. Where the brief and the sources disagree
 
@@ -70,7 +70,7 @@ Brief §1 says the specification wins and any difference is a finding. F1–F4 c
 | F4 | AC1: "RFC 8414, and OIDC discovery if already served" | OIDC discovery *is* already served, but only for key discovery (`Program.cs` L472–496: bare `issuer`, empty `response_types_supported`), and two existing tests pin exactly that (`JwksEndpointTests.cs` L46, L59). `MCP-AUTHZ` Overview item 5 requires only one of the two mechanisms. `CLAUDE-TS`: Claude "tries `/.well-known/oauth-authorization-server` (RFC 8414) first, then falls back" | Putting AS endpoints or a URL issuer into the OIDC document would break AC7 and give existing consumers an issuer their tokens don't carry. Serve RFC 8414 only and leave the OIDC document byte-identical (A2) |
 | F5 | AC3: "an access token and a refresh token" | `OI` issues a refresh token only when `offline_access` has been granted (`OpenIddictServerHandlers.cs` L3460). `CLAUDE-AUTH` "DCR and CIMD details": Claude appends `offline_access` only when the AS metadata lists it in `scopes_supported` | `offline_access` has to appear in `scopes_supported` and in every client's allowed scopes. Otherwise AC3 never issues a refresh token |
 | F6 | §7: "Authorize and token events are traced" | authservice emits no traces (`DEVIATIONS.md` L16) | See N5 |
-| F7 | AC2: "authservice's existing sign-in" | authservice has no sign-in *page*. Sign-in is a JSON API (`AuthController.cs` L200–278); the pages live in consumer frontends | See B3 |
+| F7 | AC2: "authservice's existing sign-in" | authservice has no sign-in *page*. Sign-in is a JSON API (`AuthController.cs` L200–278); the pages live in consumer frontends | See B3, answered in revision 2: both modes (A11) |
 | F8 | §7 "Key material": use the existing key and its rotation | The library signs and encrypts the codes and refresh tokens it issues. `JwtSigningKeys` keeps a retired key as public-only (`JwtSigningKeys.cs` L120–143) | If the library validates its own stored tokens against the current key only, one rolling rotation (IDENTITY-AND-ACCOUNTS.md §10) kills every outstanding MCP refresh token, and every Claude connection must be re-authorised. This was not verified here, so AC4 carries a rotation test |
 | F9 | — | `CLAUDE-AUTH` "Endpoint latency": Claude waits at most 10 s for the discovery, registration and token endpoints, and 30 s for a refresh | An instance scaled to zero whose cold start is slower than that fails connections (P7). The runbook must say so (AC9) |
 | F10 | §7: "Rate limiting on the authorization and token endpoints" | `CLAUDE-AUTH` "Network reference": Anthropic's traffic comes from `160.79.104.0/21` | Every Claude user's token and refresh calls arrive from a handful of addresses. The per-IP `auth` policy and the global limiter (`Program.cs` L328–337, L354–364) would lump them into shared buckets: the corporate-NAT failure in SERVICE-API-PATTERNS.md §1. See N4 |
@@ -81,19 +81,19 @@ Brief §1 says the specification wins and any difference is a finding. F1–F4 c
 
 ## 2. Analysis table
 
-One row per acceptance criterion. Criteria are abbreviated here; Appendix A has the verbatim text. Files are named for the recommended answers to B1–B3, and a row whose files depend on an open question names that question in its last column.
+One row per acceptance criterion. Criteria are abbreviated here; Appendix A has the verbatim text. Revision 2: B1–B3 are answered, so every row's files are final and no row carries a blocking question. AC2 now covers both interaction modes (A11).
 
 | AC | Acceptance criterion | Owning context and layer | Governed by | Guide to load | Files | Blocking question |
 |---|---|---|---|---|---|---|
 | AC1 | Discovery: RFC 8414 metadata listing the authorization and token endpoints, `code`, `S256`, scopes, and a `jwks_uri` for the existing key set | identity (authservice) · HTTP surface: an anonymous well-known endpoint generated from the AS configuration | P5, P8, P11 | IDENTITY-AND-ACCOUNTS.md §3 rule 2, §10; SERVICE-API-PATTERNS.md §2; SECURITY-REVIEW.md §8; `MCP-DISC`; `MCP-SEC` "Authorization Code Protection"; `MCP-AUTHZ` "Authorization Response Validation"; `CLAUDE-TS` | `src/AuthService/Extensions/AuthorizationServerExtensions.cs` (new); `src/AuthService/Services/AuthorizationServerOptions.cs` (new); `src/AuthService/Program.cs` (registration and map calls, plus a startup-banner field; the existing `/.well-known/openid-configuration` and `/.well-known/jwks.json` handlers are unchanged); `src/AuthService/appsettings.json` (empty section, no secrets); `tests/AuthService.AuthorizationServer.Tests/DiscoveryTests.cs` (new) | none (confirm A1, A2) |
-| AC2 | Authorization endpoint: `code` with PKCE (`S256` only); exact `client_id` and `redirect_uri`; `state`; `resource`; sign-in including external providers, then resume; consent showing the client's display name and scopes | identity · HTTP surface (anonymous authorization endpoint), plus interactive pages (a new layer for this service), plus service domain (a password-sign-in decision shared with the API) | P5, P9, P10, P13, P14 | IDENTITY-AND-ACCOUNTS.md §3 rules 2–3, §4, §5, §6, §9; SECURITY-REVIEW.md §4, §5, §8; SERVICE-API-PATTERNS.md §1; FRONTEND-BFF.md §1, §3–§4 *(only if B3 = b)*; `MCP-AUTHZ` "Authorization Flow Steps" and "Resource Parameter Implementation"; `MCP-SEC` "Open Redirection" and "Mix-Up Attacks" | *If B3 = a:* `src/AuthService/Controllers/AuthorizationController.cs` (new; passthrough for the authorization endpoint). New pages: `src/AuthService/Pages/Connect/SignIn.cshtml` + `.cs`, `TwoFactor.cshtml` + `.cs`, `Consent.cshtml` + `.cs`, `ExternalReturn.cshtml` + `.cs` (served at `/oauth/callback`), `src/AuthService/Pages/_ViewImports.cshtml`, `src/AuthService/Pages/Shared/_ConnectLayout.cshtml`. `src/AuthService/Services/SignInFlow.cs` (new; the decision extracted from `AuthController.Login`). `src/AuthService/Controllers/AuthController.cs` (`Login` delegates to it; behaviour unchanged). `src/AuthService/Extensions/AuthorizationServerExtensions.cs` (AS cookie scheme, Razor Pages, antiforgery, headers, PKCE settings). `tests/AuthService.Tests/SignInCharacterizationTests.cs` (new; written before the extraction). `tests/AuthService.AuthorizationServer.Tests/AuthorizationFlowTests.cs` (new) | **B3**, B2 |
-| AC3 | Token endpoint: a single-use, short-lived, PKCE-verified code becomes an access token plus a refresh token; the `refresh_token` grant rotates single-use | identity · HTTP surface (client-authenticated token endpoint), plus service domain (refresh re-checks the user and rebuilds claims), plus persistence (codes, authorizations and tokens in authservice's own database) | P3, P4, P5, P13 | IDENTITY-AND-ACCOUNTS.md §1, §2; SERVICE-API-PATTERNS.md §1, §7; `MCP-SEC` "Token Theft" and "Authorization Code Protection"; `CLAUDE-AUTH` "Token refresh" and "Endpoint latency" | `src/AuthService/Controllers/AuthorizationController.cs` (token passthrough); `src/AuthService/Extensions/AuthorizationServerExtensions.cs` (grants, lifetimes, reuse leeway, token-endpoint rate-limit policy); `src/AuthService.Data/Data/ApplicationDbContext.cs` (library entities mapped in `OnModelCreating`); `src/AuthService.Data/AuthService.Data.csproj` (`OpenIddict.EntityFrameworkCore` 7.7.x); `src/AuthService/AuthService.csproj` (`OpenIddict.AspNetCore` 7.7.x); `src/AuthService.Migrations.PostgreSQL/Migrations/<timestamp>_AddAuthorizationServer.cs` and `.Designer.cs` (new), `ApplicationDbContextModelSnapshot.cs` (changed), with the same three in `src/AuthService.Migrations.SqlServer/Migrations/`, all on top of the B1 baseline; `src/AuthService/Services/UserCleanupService.cs` (hourly prune); `tests/AuthService.AuthorizationServer.Tests/AuthorizationFlowTests.cs` | **B1** |
+| AC2 | Authorization endpoint: `code` with PKCE (`S256` only); exact `client_id` and `redirect_uri`; `state`; `resource`; sign-in including external providers, then resume; consent showing the client's display name and scopes | identity · HTTP surface (anonymous authorization endpoint), plus interaction in one of two modes (A11): **Hosted**, pages rendered by authservice (a new layer for this service), or **External**, an interaction API a consumer's frontend calls through its BFF; plus service domain (a password-sign-in decision shared with the API) | P5, P9, P10, P13, P14 | IDENTITY-AND-ACCOUNTS.md §3 rules 2–3, §4, §5, §6, §9; SECURITY-REVIEW.md §4, §5, §8; SERVICE-API-PATTERNS.md §1, §2; FRONTEND-BFF.md §1, §3 (the External mode's contract with a consumer's BFF); `MCP-AUTHZ` "Authorization Flow Steps" and "Resource Parameter Implementation"; `MCP-SEC` "Open Redirection" and "Mix-Up Attacks" | *Both modes:* `src/AuthService/Controllers/AuthorizationController.cs` (new; passthrough for the authorization endpoint, dispatching on the mode); `src/AuthService/Extensions/AuthorizationServerExtensions.cs` (AS cookie scheme, Razor Pages, antiforgery, headers, PKCE settings, mode). *Hosted:* new pages `src/AuthService/Pages/Connect/SignIn.cshtml` + `.cs`, `TwoFactor.cshtml` + `.cs`, `Consent.cshtml` + `.cs`, `ExternalReturn.cshtml` + `.cs` (served at `/oauth/callback`), `src/AuthService/Pages/_ViewImports.cshtml`, `src/AuthService/Pages/Shared/_ConnectLayout.cshtml`. `src/AuthService/Services/SignInFlow.cs` (new; the decision extracted from `AuthController.Login`). `src/AuthService/Controllers/AuthController.cs` (`Login` delegates to it; behaviour unchanged). `tests/AuthService.Tests/SignInCharacterizationTests.cs` (new; written before the extraction). *External:* `src/AuthService/Controllers/AuthorizationInteractionController.cs` (new; `GET /api/v1/oauth/interactions/{id}`, `POST …/{id}/accept`, `POST …/{id}/deny`); `src/AuthService.Data/Models/AuthorizationInteraction.cs` (new entity, mapped in `ApplicationDbContext` and created by the AC3 migration). *Tests:* `tests/AuthService.AuthorizationServer.Tests/AuthorizationFlowTests.cs` and `…/ExternalInteractionTests.cs` (new) | none |
+| AC3 | Token endpoint: a single-use, short-lived, PKCE-verified code becomes an access token plus a refresh token; the `refresh_token` grant rotates single-use | identity · HTTP surface (client-authenticated token endpoint), plus service domain (refresh re-checks the user and rebuilds claims), plus persistence (codes, authorizations and tokens in authservice's own database) | P3, P4, P5, P13 | IDENTITY-AND-ACCOUNTS.md §1, §2; SERVICE-API-PATTERNS.md §1, §7; `MCP-SEC` "Token Theft" and "Authorization Code Protection"; `CLAUDE-AUTH` "Token refresh" and "Endpoint latency" | `src/AuthService/Controllers/AuthorizationController.cs` (token passthrough); `src/AuthService/Extensions/AuthorizationServerExtensions.cs` (grants, lifetimes, reuse leeway, token-endpoint rate-limit policy); `src/AuthService.Data/Data/ApplicationDbContext.cs` (library entities mapped in `OnModelCreating`); `src/AuthService.Data/AuthService.Data.csproj` (`OpenIddict.EntityFrameworkCore` 7.7.x); `src/AuthService/AuthService.csproj` (`OpenIddict.AspNetCore` 7.7.x); `src/AuthService.Migrations.PostgreSQL/Migrations/<timestamp>_AddAuthorizationServer.cs` and `.Designer.cs` (new), `ApplicationDbContextModelSnapshot.cs` (changed), with the same three in `src/AuthService.Migrations.SqlServer/Migrations/`, all on top of the baseline from PR #65, and also creating the `AuthorizationInteraction` table (AC2, External); `src/AuthService/Services/UserCleanupService.cs` (hourly prune); `tests/AuthService.AuthorizationServer.Tests/AuthorizationFlowTests.cs` | none (~~B1~~ closed by PR #65) |
 | AC4 | Access tokens: signed, not encrypted; the existing key and `kid`; validate through the existing JWKS; `aud` set to the resource; `sub` the same user id; a `scope` claim; claims enriched as they are today | identity · service domain (token issuance and claim building) | P5, P11, P13 | IDENTITY-AND-ACCOUNTS.md §1, §10; SECURITY-REVIEW.md §4; `MCP-AUTHZ` "Token Handling"; `MCP-SEC` "Token Audience Binding and Validation"; `CLAUDE-TS` "Audience mismatch" and "Issuer mismatch" | `src/AuthService/Services/ITokenService.cs` and `src/AuthService/Services/TokenService.cs` (expose the existing private `BuildClaimsAsync`, L217–245, for reuse; `GenerateTokensAsync` output unchanged); `src/AuthService/Controllers/AuthorizationController.cs` (the principal: `sub`, enriched claims, scopes, resource as `aud`); `src/AuthService/Extensions/AuthorizationServerExtensions.cs` (signing key taken from `JwtSigningKeys`, access-token encryption off, issuer, RS256 check); `tests/AuthService.AuthorizationServer.Tests/AccessTokenTests.cs` (new; includes the F8 rotation test) | none (confirm A1, A3, A9) |
 | AC5 | Client registration v1: pre-registered confidential clients in configuration (id, display name, redirect URIs, scopes, resources); secrets from platform secrets only; Claude first, with its redirect URIs in configuration | identity · configuration (options and startup validation), plus persistence (sync into the library's client store) | P5, P8, P10 | SERVICE-API-PATTERNS.md §7, §8; IDENTITY-AND-ACCOUNTS.md §10; `MCP-REG` "Pre-registration"; `MCP-SEC` "Communication Security"; `CLAUDE-AUTH` "Callback URLs" and "Custom connectors"; `CLAUDE-HELP` "Add a custom connector" | `src/AuthService/Services/AuthorizationServerOptions.cs` (new); `src/AuthService/Services/AuthorizationClientSync.cs` (new hosted service); `src/AuthService/Extensions/AuthorizationServerExtensions.cs` (startup validation and registration); `src/AuthService/appsettings.json`; `tests/AuthService.AuthorizationServer.Tests/ClientRegistrationTests.cs` (new) | none (confirm A5, A8) |
-| AC6 | Revocation: global revocation also revokes MCP refresh tokens and authorizations; a user can revoke one connected client | identity · service domain (the single global revocation operation), plus HTTP surface (an authenticated user endpoint), plus persistence | P9, P13 | IDENTITY-AND-ACCOUNTS.md §2, §8; SERVICE-API-PATTERNS.md §2; SECURITY-REVIEW.md §8 | `src/AuthService/Services/TokenService.cs` (`RevokeRefreshTokensAsync`, L95–113, also revokes the user's MCP authorizations and tokens; its 11 call sites stay as they are); `src/AuthService/Services/UserCleanupService.cs` (deletes MCP rows at permanent deletion); `src/AuthService/Controllers/ConnectedClientsController.cs` (new; `DELETE /api/v1/auth/connected-clients/{clientId}`); `src/AuthService.Data/Models/AuditEvent.cs` (new `AuditAction` constants); `docs/roles.md` (the revoke-sessions statement and the endpoint rows); `tests/AuthService.AuthorizationServer.Tests/RevocationTests.cs` (new) | B1 |
+| AC6 | Revocation: global revocation also revokes MCP refresh tokens and authorizations; a user can revoke one connected client | identity · service domain (the single global revocation operation), plus HTTP surface (an authenticated user endpoint), plus persistence | P9, P13 | IDENTITY-AND-ACCOUNTS.md §2, §8; SERVICE-API-PATTERNS.md §2; SECURITY-REVIEW.md §8 | `src/AuthService/Services/TokenService.cs` (`RevokeRefreshTokensAsync`, L95–113, also revokes the user's MCP authorizations and tokens; its 11 call sites stay as they are); `src/AuthService/Services/UserCleanupService.cs` (deletes MCP rows at permanent deletion); `src/AuthService/Controllers/ConnectedClientsController.cs` (new; `DELETE /api/v1/auth/connected-clients/{clientId}`); `src/AuthService.Data/Models/AuditEvent.cs` (new `AuditAction` constants); `docs/roles.md` (the revoke-sessions statement and the endpoint rows); `tests/AuthService.AuthorizationServer.Tests/RevocationTests.cs` (new) | none (~~B1~~ closed by PR #65) |
 | AC7 | No regression: the existing suite passes untouched, plus a test of the pre-change token shape | identity · tests (characterisation of the existing contract) | P11, P13 | TESTING-STRATEGY.md §5, §6, §9 | `tests/AuthService.Tests/TokenContractCharacterizationTests.cs` (new; HS256; written first, against unchanged code); `tests/AuthService.AuthorizationServer.Tests/TokenContractRs256CharacterizationTests.cs` (new; the RS256 half; written first); no existing file under `tests/` is touched | none |
-| AC8 | End-to-end: the full flow plus negative cases (wrong verifier, reused code, mismatched `redirect_uri`, wrong audience, unknown client, `plain`) | identity · integration tests (in-process host, HTTP level, SQLite) | P13 | TESTING-STRATEGY.md §4, §5, §6, §9; `MCP-SEC`; `CLAUDE-AUTH` "Token refresh" | `tests/AuthService.AuthorizationServer.Tests/AuthService.AuthorizationServer.Tests.csproj` (new project); `tests/AuthService.AuthorizationServer.Tests/Infrastructure/AuthorizationServerFactory.cs` and `…/Infrastructure/AuthorizationFlowClient.cs` (new); `tests/AuthService.AuthorizationServer.Tests/AuthorizationFlowTests.cs` (new); `AuthService.sln` (adds the project so CI's `dotnet test AuthService.sln` runs it) | B3 (the shape of the sign-in step) |
-| AC9 | Documentation: an ADR for the decisions in brief §8, and a runbook section "Registering an MCP client" with placeholder values | identity · docs | P14, P5 | 00-REFERENCE-ARCHITECTURE.md P14 and its stale-README corollary; REPO-BASELINE.md §8; IDENTITY-AND-ACCOUNTS.md §10 | `docs/decisions/0005-mcp-authorization-server.md` (new); `docs/decisions/0003-scope.md` and `docs/decisions/0004-agent-to-agent-authorization.md` (status and cross-reference lines only); `docs/DEPLOYMENT.md` (a new "Registering an MCP client" section between "Pointing a service at it" and "A note on shape", rows in "What the container needs", secrets in the `fly.toml` block); `README.md` (API overview, "What's intentionally not here", the configuration table, and a line distinguishing this "MCP" from the `integrate` server); `CONTRIBUTING.md` (scope boundary); `SECURITY.md` (scope and posture); `.github/ISSUE_TEMPLATE/feature_request.yml` (scope wording); `docs/architecture/DEVIATIONS.md` (the `iss` and single-audience rows); `docs/roles.md` (shared with AC6) | B2 |
+| AC8 | End-to-end: the full flow plus negative cases (wrong verifier, reused code, mismatched `redirect_uri`, wrong audience, unknown client, `plain`) | identity · integration tests (in-process host, HTTP level, SQLite) | P13 | TESTING-STRATEGY.md §4, §5, §6, §9; `MCP-SEC`; `CLAUDE-AUTH` "Token refresh" | `tests/AuthService.AuthorizationServer.Tests/AuthService.AuthorizationServer.Tests.csproj` (new project); `tests/AuthService.AuthorizationServer.Tests/Infrastructure/AuthorizationServerFactory.cs` and `…/Infrastructure/AuthorizationFlowClient.cs` (new); `tests/AuthService.AuthorizationServer.Tests/AuthorizationFlowTests.cs` (new); `tests/AuthService.AuthorizationServer.Tests/ExternalInteractionTests.cs` (new; the same flow in External mode); `AuthService.sln` (adds the project so CI's `dotnet test AuthService.sln` runs it) | none (~~B3~~ answered) |
+| AC9 | Documentation: an ADR for the decisions in brief §8, and a runbook section "Registering an MCP client" with placeholder values | identity · docs | P14, P5 | 00-REFERENCE-ARCHITECTURE.md P14 and its stale-README corollary; REPO-BASELINE.md §8; IDENTITY-AND-ACCOUNTS.md §10 | `docs/decisions/0005-mcp-authorization-server.md` (new); `docs/decisions/0003-scope.md` and `docs/decisions/0004-agent-to-agent-authorization.md` (status and cross-reference lines only); `docs/DEPLOYMENT.md` (a new "Registering an MCP client" section between "Pointing a service at it" and "A note on shape", rows in "What the container needs", secrets in the `fly.toml` block); `README.md` (API overview, "What's intentionally not here", the configuration table, and a line distinguishing this "MCP" from the `integrate` server); `CONTRIBUTING.md` (scope boundary); `SECURITY.md` (scope and posture); `.github/ISSUE_TEMPLATE/feature_request.yml` (scope wording); `docs/architecture/DEVIATIONS.md` (the `iss` and single-audience rows); `docs/roles.md` (shared with AC6) | none (~~B2~~ answered) |
 
 ### Row notes: requirements derived for each row
 
@@ -115,10 +115,15 @@ These are part of the table and travel with it into the master prompt.
 - Tests assert each of these fields, and assert that the OIDC document and the JWKS are unchanged (shared with AC7).
 
 **AC2**
+
+*Both modes*
 - PKCE is required, and `plain` is removed from the library's code-challenge methods. By default the library enables `plain` and doesn't require PKCE (`OpenIddictServerOptions.cs` L494–498, L533).
 - Exactly one `resource` is required, and it must be in the client's allowed list (N10).
-- `redirect_uri` must match a configured value exactly. Errors found before `redirect_uri` is validated are shown on an authservice page and never redirected (`MCP-SEC` "Open Redirection").
+- `redirect_uri` must match a configured value exactly. Errors found before `redirect_uri` is validated are shown on an authservice page and never redirected (`MCP-SEC` "Open Redirection"). That error page is the only page External mode renders.
 - Every authorization response carries `iss` (F2).
+- The mode comes from `AuthorizationServer:Interaction:Mode`: `Hosted`, the default, or `External` (A11).
+
+*Hosted mode*
 - The authorization session uses its own cookie scheme, **never `Identity.Application`**. The external callback signs into that scheme with `bypassTwoFactor: true` (`ExternalAuthController.cs` L114–118), so trusting it would skip the second factor.
 - Password sign-in runs the same decision as `POST /api/v1/auth/login` (`AuthController.cs` L213–266; IDENTITY-AND-ACCOUNTS.md §5, §6):
   - a generic failure message;
@@ -134,6 +139,16 @@ These are part of the table and travel with it into the master prompt.
 - The pages send the header set from SECURITY-REVIEW.md §4, with `frame-ancestors 'none'` so consent can't be clickjacked.
 - Legal consent and account state are handled as in N6 and N7.
 
+*External mode* (A12, A13). The consumer's frontend signs the user in with the flows it already has, unchanged: password, 2FA and external providers. authservice renders nothing beyond the error page above.
+1. authservice validates the authorization request exactly as in Hosted mode.
+2. It records a pending `AuthorizationInteraction` (a hashed handle, what it needs to resume the request, client, scopes, resource, a 10-minute expiry). It sets an HttpOnly, Secure, SameSite=Lax cookie on its own origin that binds the interaction to this browser, then redirects to `<ExternalUrl>?interaction=<handle>`.
+3. The frontend's BFF calls `GET /api/v1/oauth/interactions/{handle}` with the user's bearer token and gets the client's display name, the redirect host and the scope descriptions.
+4. On the user's decision, the BFF calls `POST /api/v1/oauth/interactions/{handle}/accept` or `…/deny` with the same token. authservice binds the interaction to that user and returns a `redirectTo` on its own origin carrying a single-use ticket: hashed, 60 s, the `OAuthExchangeCode` shape.
+5. The browser follows `redirectTo`. authservice redeems the ticket **atomically** (a conditional update, unlike `OAuthExchangeCodeService.RedeemAsync`, §4.6), checks it belongs to the interaction this browser's cookie names, and completes the authorization response with a code and `iss`. A denial completes with `access_denied`.
+- The frontend can accept or deny only what was requested and allowed; it cannot add a scope or a resource (A13).
+- The interaction API is bearer-authenticated, on the authenticated trust level (SERVICE-API-PATTERNS.md §2), under the `api` rate-limit policy. It needs no CORS, because a BFF calls it server-side (FRONTEND-BFF.md §1).
+- The browser-binding cookie defeats login CSRF: without it, an attacker could finish a victim's flow with a ticket issued to the attacker's own account, and the victim's Claude would be connected to the attacker's data.
+- The consumer's pages live in the consumer's repository (out of scope). The runbook documents the contract they call (AC9).
 **AC3**
 - An authorization code lives 60 s and is single-use. Refresh tokens rotate with a reuse leeway of 0; the library default is 30 s (`OpenIddictServerOptions.cs` L302). See N3.
 - Every refresh rebuilds the claims from the current user and refuses deleted or locked-out users, as `TokenService.RefreshTokenAsync` does today (L77–86; IDENTITY-AND-ACCOUNTS.md §1). See A10.
@@ -216,6 +231,14 @@ These are part of the table and travel with it into the master prompt.
   - a confidential client without its secret is refused;
   - authservice's own API rejects the MCP token;
   - captured logs contain no code, token, secret or verifier (N5).
+- External mode runs the same flow, with the consumer's frontend simulated by calls to the interaction API using the user's bearer token. Its negative cases:
+  - a replayed ticket;
+  - a ticket from another interaction;
+  - a missing or mismatched browser-binding cookie;
+  - an expired interaction;
+  - a different user accepting;
+  - the frontend trying to add a scope.
+- The mode is read through options at request time, so the External-mode host in the new test project sets it with `ConfigureAppConfiguration` rather than an environment variable (N14).
 - No sleeps. Clock-dependent cases use the library's `TimeProvider` (TESTING-STRATEGY.md §6).
 
 **AC9**
@@ -226,6 +249,7 @@ These are part of the table and travel with it into the master prompt.
   - that ADR 0003's first exclusion is amended for configured MCP clients while the rest of its list stands;
   - that OpenIddict returns now that it has a use (`EXTRACTION.md` L46–48 removed it for being unused);
   - the token contract `AP-MCP-01` validates against (A9);
+  - both interaction modes, how they're chosen, and the External mode's protocol (A11–A13), including that authservice now renders HTML in Hosted mode;
   - the size of the service after the change (§4.6).
 - The runbook section covers:
   - the configuration shape, with placeholders only (P5; `.gitleaks.toml` allowlists only the demo files);
@@ -234,7 +258,9 @@ These are part of the table and travel with it into the master prompt.
   - `min_machines_running = 1`, or a cold start well under 10 s (F9, P7);
   - trusting forwarded headers, so the library sees HTTPS;
   - adding the issuer's origin to `OAuth:PostLoginRedirectAllowedBaseUrls`;
-  - what `AP-MCP-01` puts in its protected-resource metadata: the issuer listed first in `authorization_servers` (`CLAUDE-AUTH` "Cross-host authorization servers").
+  - what `AP-MCP-01` puts in its protected-resource metadata: the issuer listed first in `authorization_servers` (`CLAUDE-AUTH` "Cross-host authorization servers");
+  - choosing the interaction mode, and for External mode, the contract the consumer's frontend calls: the three interaction endpoints, the bearer token they take, the redirect the frontend follows, and the 10-minute window;
+  - that the initial migration set from PR #65 must be adopted first by a deployment still on `EnsureCreated`, because the authorization server's tables arrive as a migration.
 - After this change "MCP" means two things in this repository: the `integrate` server (`src/AuthService.Mcp`, README section "MCP integration server"), and MCP connector clients. The runbook heading and the README must say which one they mean.
 
 ### Every file the table names
@@ -248,6 +274,8 @@ This list is for the definition-of-done check "no file touched outside the analy
   - `src/AuthService/Services/SignInFlow.cs`
   - `src/AuthService/Controllers/AuthorizationController.cs`
   - `src/AuthService/Controllers/ConnectedClientsController.cs`
+  - `src/AuthService/Controllers/AuthorizationInteractionController.cs`
+  - `src/AuthService.Data/Models/AuthorizationInteraction.cs`
   - `src/AuthService/Pages/_ViewImports.cshtml`
   - `src/AuthService/Pages/Shared/_ConnectLayout.cshtml`
   - `src/AuthService/Pages/Connect/{SignIn,TwoFactor,Consent,ExternalReturn}.cshtml` and `.cshtml.cs`
@@ -255,7 +283,7 @@ This list is for the definition-of-done check "no file touched outside the analy
 - **New (tests):**
   - `tests/AuthService.Tests/TokenContractCharacterizationTests.cs`
   - `tests/AuthService.Tests/SignInCharacterizationTests.cs`
-  - `tests/AuthService.AuthorizationServer.Tests/` containing: the `.csproj`, `Infrastructure/AuthorizationServerFactory.cs`, `Infrastructure/AuthorizationFlowClient.cs`, `DiscoveryTests.cs`, `ClientRegistrationTests.cs`, `AuthorizationFlowTests.cs`, `AccessTokenTests.cs`, `RevocationTests.cs`, `TokenContractRs256CharacterizationTests.cs`
+  - `tests/AuthService.AuthorizationServer.Tests/` containing: the `.csproj`, `Infrastructure/AuthorizationServerFactory.cs`, `Infrastructure/AuthorizationFlowClient.cs`, `DiscoveryTests.cs`, `ClientRegistrationTests.cs`, `AuthorizationFlowTests.cs`, `ExternalInteractionTests.cs`, `AccessTokenTests.cs`, `RevocationTests.cs`, `TokenContractRs256CharacterizationTests.cs`
 - **New (docs):** `docs/decisions/0005-mcp-authorization-server.md`
 - **Changed:**
   - `src/AuthService/Program.cs`
@@ -282,9 +310,7 @@ This list is for the definition-of-done check "no file touched outside the analy
   - `EXTRACTION.md`, `docs/issue-analysis.md` (both historical records)
   - `tutorial.md`, `docs/index.html`
   - `src/AuthService.Mcp/`
-- **If another answer is chosen:**
-  - B1 = c adds `docs/schema/upgrade/v0.3-{postgresql,sqlserver}.sql` and `docs/schema/README.md`, and drops the migration files.
-  - B3 = b replaces the pages with an interaction API controller in this repository, plus pages in the consumer's frontend repository (a second ticket).
+- *(Revision 1 listed alternative file sets for other answers to B1 and B3. Both questions are closed, so the list above is final.)*
 
 ### Out of scope
 
@@ -305,7 +331,8 @@ This list is for the definition-of-done check "no file touched outside the analy
 - The single-audience deviation (`DEVIATIONS.md` L22) for existing tokens. MCP tokens are audience-bound; existing tokens belong to AC7.
 - OTLP tracing (`DEVIATIONS.md` L16); see N5.
 - Refactoring the existing `Program.cs` (`DEVIATIONS.md` L20). A6 only avoids making it worse.
-- The initial migration set. B1 recommends it land separately.
+- ~~The initial migration set. B1 recommends it land separately.~~ It landed in PR #65 (issue #17).
+- The sign-in and consent pages a consumer's frontend renders in External mode. They belong to that consumer's repository (for AureliusPromptus, `AP-MCP-01` or its frontend ticket). This ticket delivers the interaction API and documents its contract.
 - ADR 0004's scope model. MCP scopes here are opaque configured strings that the resource server enforces, not ADR 0004's subset-checkable model.
 
 ---
@@ -319,7 +346,7 @@ The compliance checklist is walked only for the layers the table names (TICKET-A
 | Item | At risk because | Status |
 |---|---|---|
 | Owns its database; no other service connects to it | New tables | **Kept.** The library's tables live in `ApplicationDbContext` (P3). Resource servers validate offline (D4) and never read them |
-| Schema applied by `MigrateAsync` from provider-specific migrations, in a hosted service | There is no migration set | **Open → B1** |
+| Schema applied by `MigrateAsync` from provider-specific migrations, in a hosted service | There was no migration set | ~~Open → B1~~ **Kept.** The sets landed in PR #65. This ticket adds one incremental migration per provider, and CI's `Migrations` job enforces model/migration agreement |
 | All configuration from environment variables; no secret in source, config file, or comment, with a secret scanner in CI | Client secrets and the encryption key | **Kept.** Both exist only as platform secrets. `appsettings.json` carries empty values, as it already does for `OAuth:Google:ClientSecret`. The runbook uses placeholders, tests generate their own values, and gitleaks runs in CI (`.github/workflows/secret-scan.yml`) |
 | Exactly one service holds a signing key; all others validate against its JWKS endpoint | The library's own JWKS; HS256 deployments | **Kept** by A2 (library JWKS off, one JWKS) and A3 (RS256 required) |
 | Every optional integration has a working no-op or fallback | A new capability | **Kept** by A5 |
@@ -329,7 +356,7 @@ The compliance checklist is walked only for the layers the table names (TICKET-A
 | `Program.cs` is a manifest; wiring lives in `ServiceCollectionExtensions` | New wiring | **Kept** for the new code by A6 |
 | Extension points are interfaces registered in DI, not base classes | Library handlers | **Kept.** Passthrough controllers and DI-registered handlers (P10) |
 | Has a test project; the logic-bearing layer is covered; characterisation tests come before a move | The `Login` extraction; changes to the token path | **Kept** by AC7 (written first) and `SignInCharacterizationTests` (written before `SignInFlow` is extracted). N14 adds a second test project |
-| Its architectural decisions are recorded in `docs/` | Reverses ADR 0003 | **Open → B2.** AC9 is the record itself |
+| Its architectural decisions are recorded in `docs/` | Reverses ADR 0003 | ~~Open → B2~~ **Decided:** ADR 0005 amends ADR 0003 (Konrad, 2026-09-23). AC9 is the record itself |
 
 **IDENTITY-AND-ACCOUNTS.md §12**
 
@@ -357,7 +384,8 @@ The compliance checklist is walked only for the layers the table names (TICKET-A
 | Endpoint groups make trust levels visible | **Kept.** The extension groups endpoints by trust level: anonymous (metadata, authorize, token, sign-in pages), AS cookie (consent), and bearer (connected clients) |
 | Background services wait for the migration completion signal | **Kept.** Client sync (AC5) and pruning (AC3) |
 | Seeded definitions: insert if missing, never overwrite | **Deliberately different** (A8) |
-| Deny by default, with a short `[AllowAnonymous]` list and an endpoint × role matrix | The anonymous list gains the metadata, authorize and token endpoints and the sign-in pages. They get listed in `docs/roles.md` (AC6, AC9) |
+| Deny by default, with a short `[AllowAnonymous]` list and an endpoint × role matrix | The anonymous list gains the metadata, authorize and token endpoints and the sign-in pages. They get listed in `docs/roles.md` (AC6, AC9). The External interaction API is authenticated, not anonymous |
+| Findings stated as attack scenarios (the External mode's handoff) | **Decided (A12, A13).** Login CSRF is stopped by the browser-binding cookie; ticket replay by atomic single-use redemption; scope widening by accepting only what was requested and allowed |
 | No tokens in web storage; cookies set server-side; the header set on every page | The AS cookie is HttpOnly, Secure, SameSite=Lax and scoped to its paths. The AS pages send the header set (AC2) |
 | CSPRNG for anything a caller can present as proof | Codes and tokens are generated by the library. Client secrets are generated as the runbook instructs (IDENTITY-AND-ACCOUNTS.md §10) |
 | Encode at render time | Razor encodes by default. Client names and scope descriptions come from configuration, which is trusted |
@@ -476,9 +504,11 @@ None of these is in scope; they are recorded so they aren't lost.
 
 ### 5.1 Blocking
 
-Implementation cannot start until each of these is answered, because each changes what gets built (TICKET-ANALYSIS §5). Each has a recommended answer; none is answered yet.
+Revision 2: all three are answered. They stay here, struck, with the answer and who gave it (TICKET-ANALYSIS §2). Revision 1's text follows each struck heading unchanged.
 
-**B1: How does the schema change reach the database? (P4)**
+~~**B1: How does the schema change reach the database? (P4)**~~
+
+> **Closed, revision 2.** Option (a): the initial migration set landed on its own as PR #65 (issue #17), which Konrad authorised on 2026-09-23 ("Yes, merge when green (Recommended)", in answer to whether the #17 PR could be merged ahead of AUTH-MCP-01). This ticket adds an incremental migration on top.
 *Question:* The new tables need migrations (P4; brief §7), and neither migrations project contains a migration set (`DEVIATIONS.md` L18). Which of these happens?
 - (a) The initial migration set (issue #17) lands first, as its own change.
 - (b) It lands inside AUTH-MCP-01.
@@ -492,7 +522,9 @@ Implementation cannot start until each of these is answered, because each change
 - (c) records a P4 deviation that ADR 0004 says "widens the estate's most acute open deviation rather than paying it down". It also means hand-writing the library's DDL for two providers.
 - Either way, the baseline can't be generated in this container (§4.6).
 
-**B2: Does AUTH-MCP-01 knowingly amend ADR 0003? (P14)**
+~~**B2: Does AUTH-MCP-01 knowingly amend ADR 0003? (P14)**~~
+
+> **Answered, revision 2.** "Amend via ADR 0005 (Recommended)", from Konrad, 2026-09-23, in the session. D1 is confirmed as a knowing amendment of ADR 0003, recorded by AC9's ADR 0005.
 *Question:* D1 turns authservice into an OAuth authorization server. ADR 0003 excludes exactly that: "authorization code flow, an authorization endpoint, a standards-shaped token endpoint, consent screens, client registration, introspection … re-adding OpenIddict would undo the extraction decision" (L36–38). ADR 0004 (Proposed) restates the exclusion for "third-party, browser-facing clients" (L132, L137–138), and Claude is one. Is the amendment intended?
 *Blocks:* whether this ticket proceeds in this repository at all; the ADR's content (AC9); and the README, CONTRIBUTING, SECURITY and issue-template changes.
 *Recommendation:* **Yes, through ADR 0005.** ADR 0005 would amend ADR 0003's first exclusion for configured MCP clients only and keep the rest of the list (OIDC provider features, introspection, DCR, admin UI). Its grounds:
@@ -504,7 +536,10 @@ Implementation cannot start until each of these is answered, because each change
 
 The brief records D1 as decided, but the brief was written "before the repository was read" (its own header). So whether D1 accepted reversing ADR 0003 cannot be inferred from it, and TICKET-ANALYSIS §6 says such a condition is treated as unmet.
 
-**B3: Where do sign-in and consent render? (brief Q1)**
+~~**B3: Where do sign-in and consent render? (brief Q1)**~~
+
+> **Answered, revision 2. This is a scope change** (FEEDBACK.md §2). Konrad's words, 2026-09-23, verbatim: *"Consumer should have an option to choose , we should provide some pages as well ondly dconsumer frontend"*.
+> **Reading:** both modes, chosen per deployment. authservice ships its own sign-in and consent pages (Hosted, the default), and a deployment can instead have its own frontend render them through an interaction API (External). A11–A13 hold the design; AC2's row and notes carry the files and requirements. If the reading is wrong, correct it through `/ticket-feedback`: AC2, AC8, A11–A13 and the master prompt would all go stale.
 *Question:* The two options are:
 - (a) **authservice-hosted pages.** A dedicated AS cookie session. Password sign-in shares `SignInFlow` with the API. External providers resume through the existing exchange-code handoff, with `ExternalAuthController` unchanged. 2FA is applied on the page.
 - (b) **The consumer's frontend, through its BFF.** An interaction handoff in the style of Ory Hydra: authservice exposes "get request / approve / deny" to a frontend that already has the user's session (FRONTEND-BFF.md §1, §3).
@@ -547,7 +582,7 @@ Each assumption goes into the pull request (TICKET-ANALYSIS §5).
 
 | Q | Status |
 |---|---|
-| Q1: Where do sign-in and consent render, and how does the flow resume after external sign-in? | **Open → B3.** The resume mechanism is in AC2's notes |
+| ~~Q1: Where do sign-in and consent render, and how does the flow resume after external sign-in?~~ | Answered through B3 (Konrad, 2026-09-23): both modes (A11). ~~Open → B3.~~ The resume mechanism is in AC2's notes |
 | Q2: Scope naming and token lifetimes for MCP clients | **Proposed → N1.** Open until confirmed |
 | ~~Q3: Does the library's storage fit authservice's persistence and migration approach?~~ | Answered by this analysis from the code and the library source. The library's EF Core stores live in `ApplicationDbContext` (P3), are portable across providers, and are applied by migrations (P4), once B1 supplies a migration set. They must be mapped in `OnModelCreating` (AC3 notes) |
 | ~~Q4: Which discovery document does Claude request?~~ | Answered from `CLAUDE-TS`: RFC 8414 first, then OIDC discovery as a fallback, and one is enough. → A2 |
@@ -561,7 +596,7 @@ Each assumption goes into the pull request (TICKET-ANALYSIS §5).
 
 | D | Status after this analysis | Basis |
 |---|---|---|
-| D1: Extend authservice; it stays the only IdP | Consistent with P3 and SHARED-SERVICE-REUSE.md §1. **Pending B2** | Amending ADR 0003 has to be a recorded decision (P14) |
+| D1: Extend authservice; it stays the only IdP | Consistent with P3 and SHARED-SERVICE-REUSE.md §1. ~~Pending B2~~ **Confirmed:** Konrad answered B2, amending ADR 0003 through ADR 0005 (2026-09-23) | Amending ADR 0003 has to be a recorded decision (P14) |
 | D2: Use a maintained library, with OpenIddict the candidate | **Confirmed**, with the overrides in A7 | OpenIddict is the maintained open-source .NET authorization-server library (Apache-2.0). Duende IdentityServer is commercially licensed and wasn't considered further for an MIT image that other systems deploy. The library's defaults for a public third-party client are the right ones (`iss` in responses, exact redirect matching, per-client resource permissions, token-chain revocation), and those are exactly where hand-rolled servers fail. A hand-rolled server in the style of ADR 0004 was considered: one refresh store, one claim builder, no encryption key. It was rejected because the two things it simplifies are recovered anyway, by one revocation operation spanning both stores (IDENTITY-AND-ACCOUNTS.md §2) and one shared claim builder (§1) |
 | D3: Static pre-registered clients, no DCR | **Confirmed** | Pre-registration is one of the three mechanisms in `MCP-REG`. Claude's custom connectors accept a client id and secret (F12). F1 rewords "DCR later" |
 | D4: Resource servers validate JWTs through the JWKS; no introspection | **Confirmed** | IDENTITY-AND-ACCOUNTS.md §1 (no callback) and P5. The resource server's audience check (`MCP-AUTHZ` "Token Handling") works on `aud`. Consequence: revocation stops refreshes, not tokens already issued, which is why N1 keeps them short-lived |
@@ -580,6 +615,9 @@ Each assumption goes into the pull request (TICKET-ANALYSIS §5).
 | A8 | Configuration is authoritative for clients. The sync upserts configured clients and disables any removed from configuration. This deliberately overrides SERVICE-API-PATTERNS.md §8's "never overwrite", because §8 protects edits admins make at runtime, and v1 has none; meanwhile a stale row for a removed client would keep accepting its secret | AC5; SERVICE-API-PATTERNS.md §8 |
 | A9 | The MCP token contract: `typ` `at+jwt`; `iss` as in A1; `aud` set to the single requested resource; `sub` = `ApplicationUser.Id`; `client_id`; `scope`, space-delimited; `jti`, `iat` and `exp`; and the enriched claims under the names existing tokens carry (AC7 establishes those names). ADR 0005 records it as the contract `AP-MCP-01` validates against | AC4; IDENTITY-AND-ACCOUNTS.md §1; `MCP-AUTHZ` "Token Handling" |
 | A10 | Every refresh rebuilds claims from the user's current state and refuses deleted or locked-out users, as the existing refresh does | IDENTITY-AND-ACCOUNTS.md §1 ("a role change takes effect at the next token"); `TokenService.cs` L77–86 |
+| A11 | Two interaction modes, chosen per deployment by `AuthorizationServer:Interaction:Mode`: `Hosted` (the default; authservice renders sign-in, 2FA and consent) or `External` (the consumer's frontend renders them). `External` requires `AuthorizationServer:Interaction:ExternalUrl`, an absolute https URL validated at startup, and the redirect is always built from that setting, never from the request. The mode is read through options at request time | B3's answer (Konrad, 2026-09-23, quoted in §5.1); P8 (the default works with no frontend at all); SECURITY-REVIEW.md §8 (no open redirect) |
+| A12 | The External handoff: a pending `AuthorizationInteraction` (CSPRNG handle stored hashed, a 10-minute expiry, what is needed to resume); an HttpOnly, SameSite=Lax cookie binding it to the browser that started it; a bearer-authenticated interaction API (get, accept, deny) on the authenticated trust level; on acceptance, a single-use 60 s ticket that authservice redeems atomically on its own origin before completing the authorization response itself | AC2; SECURITY-REVIEW.md §5 (CSPRNG for anything presentable as proof), §8 (attack scenarios); SERVICE-API-PATTERNS.md §2 (trust levels); the `OAuthExchangeCode` precedent (`OAuthExchangeCodeService.cs`), with redemption made atomic (§4.6) |
+| A13 | authservice, not the frontend, decides what can be granted. Accepting confirms the requested scopes and resource, intersected with the client's allowed lists, and nothing more. The client's display name, redirect host and scope descriptions shown to the user come from authservice's configuration through the interaction API | SECURITY-REVIEW.md §8 (authorization enforced at the resource, not in the UI); FRONTEND-BFF.md §4 ("the middleware is UX, the services are the boundary") |
 
 ### 6.3 Accepted risks
 
@@ -595,13 +633,14 @@ None yet. An accepted risk names the person who accepted it (TICKET-ANALYSIS §6
 
 | # | Condition | Result | Evidence |
 |---|---|---|---|
-| 1 | Zero blocking questions outstanding | **Not met** | B1 (migration baseline), B2 (the ADR 0003 amendment) and B3 (where sign-in and consent render) are open, each with a recommendation in §5.1 |
-| 2 | Every acceptance criterion has a complete row | **Met** | AC1–AC9 each name a layer, principles, guides and files (§2). The files for AC2, AC3, AC6, AC8 and AC9 are for the recommended answers to B1–B3, and those rows say so in their last column |
-| 3 | The owning bounded context is named, and the ticket is one ticket | **Not met** | The context is identity/authservice (P3, high confidence). Whether this is one ticket depends on B1 (whether the baseline travels inside it) and B3 (whether option b adds a consumer repository) |
-| 4 | Every compliance item at risk is kept, or covered by a recorded decision | **Not met** | P4 (the schema) → B1 and P14 (ADR 0003) → B2 are undecided. Every other item in §3 is kept or covered by A1–A10 or an N assumption |
+| 1 | Zero blocking questions outstanding | **Met** | B1 is closed (PR #65 landed the migration sets). B2 and B3 are answered by Konrad (2026-09-23), with his words recorded in §5.1. B3's answer brought in the External mode, whose design is recorded as decisions A11–A13 (confirm or overrule) rather than left as new questions |
+| 2 | Every acceptance criterion has a complete row | **Met** | AC1–AC9 each name a layer, principles, guides and files (§2), and no row's last column carries a blocking question |
+| 3 | The owning bounded context is named, and the ticket is one ticket | **Met** | The context is identity/authservice (P3). The migration baseline landed separately (PR #65). Both interaction modes live in authservice; a consumer that picks External builds its pages in its own repository, as its own work |
+| 4 | Every compliance item at risk is kept, or covered by a recorded decision | **Met** | P4 is kept (committed migration sets, plus an incremental migration). P14 is decided (ADR 0005). Every other item in §3 is kept or covered by A1–A13 or an N assumption |
 
-**Recommendation:** not yet. Answer B2 first, because it decides whether this belongs in this repository at all. Then answer B1 and B3, taking the recommended answers or overruling them, and re-run `/ticket-analysis docs/analysis/AUTH-MCP-01.md`.
+**Re-decision needed.** B3's answer changed the scope by adding a second interaction mode. FEEDBACK.md §2 has a person re-decide the gate after a scope change; four "met" lines in this document are not the yes. Invoking `/generate-master-prompt docs/analysis/AUTH-MCP-01.md` is that yes (GENERATE-MASTER-PROMPT.md §0).
 
+**Recommendation:** proceed and generate the master prompt. Check A11–A13 against what you meant by B3 first: the External mode is the largest addition in this revision, and the one place this document interprets your words rather than quoting them.
 ---
 
 ## Revision log
@@ -609,6 +648,7 @@ None yet. An accepted risk names the person who accepted it (TICKET-ANALYSIS §6
 | Run | What changed | What closed it | Still open |
 |---|---|---|---|
 | 1, 2026-09-23 | First pass. §2 table for AC1–AC9 with row notes; 12 findings against the brief (F1–F12); blocking questions B1–B3; assumptions N1–N14; D2–D4 confirmed and D1 pending B2; decisions A1–A10; Q3 and Q4 struck; Q1 → B3, Q2 → N1, Q5 → A1 | The brief; `architecture-standards@e794863`; MCP specification 2026-07-28; `CLAUDE-AUTH`, `CLAUDE-TS`, `CLAUDE-HELP`; OpenIddict 7.7.1 source; the read-only exploratory round | B1, B2, B3; confirmation of N1, A1–A10 |
+| 2, 2026-09-23 | Landed Konrad's answers: B1 closed (the migration sets landed in PR #65), B2 answered (amend ADR 0003 through ADR 0005), B3 answered as a scope change (both interaction modes). AC2 rewritten for both modes, files and notes; AC3, AC6, AC8 and AC9 unblocked; A11–A13 added; F7, flags 1/2/9, the §3 P4 and P14 rows, Q1 and D1 updated; out of scope restated. Gate re-tested: all four conditions met, re-decision requested | Konrad's answers in the session (2026-09-23); PR #65 | Konrad's re-decision of the gate; confirmation of N1 and A1–A13 |
 
 ---
 
