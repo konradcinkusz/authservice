@@ -41,11 +41,17 @@ jobs:
 
       - name: Publish self-contained single file
         run: |
+          # An mcp-v* tag's version goes into the binary, so the MCP handshake reports it.
+          version_args=()
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" == mcp-v* ]]; then
+            version_args=(-p:Version="${GITHUB_REF_NAME#mcp-v}")
+          fi
           dotnet publish src/AuthService.Mcp/AuthService.Mcp.csproj \
             --runtime ${{ matrix.rid }} \
             --self-contained true \
             -p:PublishSingleFile=true \
             --configuration Release \
+            "${version_args[@]}" \
             --output "publish/${{ matrix.rid }}"
 
       - name: Package
