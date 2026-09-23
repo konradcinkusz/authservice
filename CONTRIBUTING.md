@@ -90,12 +90,13 @@ account cannot refresh its session is worth ten asserting field ordering.
 
 ## Schema changes
 
-The schema is created with `EnsureCreated` by default, which is a bootstrap and not an upgrade
-path. If you add or change a column:
+Each provider has a committed migration set, and CI fails while the model and either set
+disagree. If you add or change a column:
 
 1. Update the model and `ApplicationDbContext.OnModelCreating`.
-2. Add the equivalent DDL to `docs/schema/upgrade/` for both PostgreSQL and SQL Server.
-3. Say so in the PR — existing deployments need to run it.
+2. Run `scripts/generate-migrations.sh <MigrationName>`, which adds the migration to both sets.
+3. Review the generated DDL and commit both.
+4. Say so in the PR — deployments still on `EnsureCreated` do not pick up schema changes.
 
 See `docs/schema/README.md`.
 

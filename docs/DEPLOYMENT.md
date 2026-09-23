@@ -24,7 +24,8 @@ contract may still move.
 | --- | --- | --- |
 | `ConnectionStrings__DefaultConnection` | yes | Startup fails naming this setting if it is missing |
 | `DATABASE_PROVIDER` | no | `PostgreSQL` (default) or `SqlServer` |
-| `Database__SchemaMode` | no | `EnsureCreated` (default), `Migrate`, or `None` — see [schema/README.md](schema/README.md) |
+| `Database__SchemaMode` | no | `EnsureCreated` (default), `Migrate`, or `None`. Use `Migrate` for a database you intend to keep, on an image that ships the committed migration sets (any release after v0.3.1); an existing `EnsureCreated` database needs the one-time adoption script first — see [schema/README.md](schema/README.md) |
+| `Database__MigrationsAssembly` | with `Migrate` | `AuthService.Migrations.PostgreSQL` or `AuthService.Migrations.SqlServer`, matching `DATABASE_PROVIDER` |
 | `Jwt__PrivateKeyPem` | for RS256 | PKCS#8 RSA private key, 2048-bit minimum |
 | `Jwt__SecretKey` | for HS256 | 32+ bytes. Only for deployments where this service is the sole validator |
 | `Jwt__Issuer` / `Jwt__Audience` | no | Default `AuthService`. Set them per product so a token from one cannot authenticate against another |

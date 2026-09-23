@@ -166,10 +166,14 @@ public static class DatabaseProviderExtensions
                 }
                 else
                 {
+                    // Pointing at Migrate alone would strand the operator: against a database
+                    // EnsureCreated made, InitialCreate tries to create tables that exist, and
+                    // startup never becomes ready. The adoption script has to run once first.
                     logger.LogWarning(
                         "Database already exists — EnsureCreated made no changes. Any schema change " +
-                        "since it was created has NOT been applied. Set Database:SchemaMode=Migrate " +
-                        "for an upgrade path (see docs/schema/README.md).");
+                        "since it was created has NOT been applied. For an upgrade path, run " +
+                        "docs/schema/upgrade/adopt-migrations-<provider>.sql against this database once, " +
+                        "then set Database:SchemaMode=Migrate (see docs/schema/README.md).");
                 }
                 break;
         }
