@@ -49,6 +49,20 @@ public class JwksEndpointTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Discovery_points_at_the_key_set_by_absolute_url_when_no_public_base_url_is_set()
+    {
+        // appsettings.json ships Jwt:PublicBaseUrl as "", which is set but blank. A relative
+        // jwks_uri is one JwtBearer cannot fetch keys from, so every token would fail validation.
+        var response = await Client.GetAsync("/.well-known/openid-configuration");
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(
+            new Uri(Client.BaseAddress!, "/.well-known/jwks.json").AbsoluteUri,
+            document.RootElement.GetProperty("jwks_uri").GetString());
+    }
+
+    [Fact]
     public async Task Discovery_advertises_no_authorization_flows()
     {
         // ADR 0003: this is metadata for key discovery, not a claim to be an OIDC provider.

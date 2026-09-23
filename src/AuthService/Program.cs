@@ -118,8 +118,10 @@ var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "AuthService";
 
 // Public origin of this service, used to build the `jwks_uri` in the discovery document.
 // Optional: without it the request's own scheme/host is used, which is correct as long as
-// forwarded headers are trusted (they are, via UseForwardedHeaders below).
-var jwtPublicBaseUrl = builder.Configuration["Jwt:PublicBaseUrl"];
+// forwarded headers are trusted (they are, via UseForwardedHeaders below). Blank counts as
+// unset: appsettings.json ships it as "", and a relative jwks_uri is unfetchable.
+var configuredPublicBaseUrl = builder.Configuration["Jwt:PublicBaseUrl"];
+var jwtPublicBaseUrl = string.IsNullOrWhiteSpace(configuredPublicBaseUrl) ? null : configuredPublicBaseUrl;
 
 // Database — supports PostgreSQL (default) or SQL Server via DatabaseProvider / DATABASE_PROVIDER.
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
