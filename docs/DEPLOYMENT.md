@@ -11,7 +11,7 @@ deployments are written against.
 ## The image
 
 ```
-ghcr.io/konradcinkusz/authservice:v0.3.2
+ghcr.io/konradcinkusz/authservice:v0.3.4
 ```
 
 Published by [`.github/workflows/publish-image.yml`](../.github/workflows/publish-image.yml) on
@@ -30,7 +30,7 @@ every version and what changed in it.
 | `Jwt__PrivateKeyPem` | for RS256 | PKCS#8 RSA private key, 2048-bit minimum |
 | `Jwt__SecretKey` | for HS256 | 32+ bytes. Only for deployments where this service is the sole validator |
 | `Jwt__Issuer` / `Jwt__Audience` | no | Default `AuthService`. Set them per product so a token from one cannot authenticate against another |
-| `Jwt__PublicBaseUrl` | with MCP clients | This service's public https origin. The issuer of MCP tokens; see [Registering an MCP client](#registering-an-mcp-client) |
+| `Jwt__PublicBaseUrl` | with MCP clients | This service's public https origin. The issuer of MCP tokens; see [Registering an MCP client](#registering-an-mcp-client). Without it, `jwks_uri` comes from the request's own origin — from v0.3.4; older images need it set, see [Pointing a service at it](#pointing-a-service-at-it) |
 | `AuthorizationServer__Clients__0__…` | no | An MCP connector client. With none, the authorization server does not exist |
 | `AuthorizationServer__EncryptionKey` | with MCP clients | 32 random bytes, base64. A platform secret |
 | `ASPNETCORE_URLS` | no | Defaults to `http://+:8080` in the image |
@@ -56,7 +56,7 @@ app = "yourproduct-authservice"
 primary_region = "fra"
 
 [build]
-  image = "ghcr.io/konradcinkusz/authservice:v0.3.2"
+  image = "ghcr.io/konradcinkusz/authservice:v0.3.4"
 
 [env]
   ASPNETCORE_ENVIRONMENT = "Production"
@@ -134,6 +134,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 Set `Jwt__Issuer` and `Jwt__Audience` to something product-specific rather than leaving the
 `AuthService` default. Two products both on the defaults would accept each other's tokens.
+
+On an image older than v0.3.4, also set `Jwt__PublicBaseUrl` on this service. Those releases
+served a relative `jwks_uri` when it was unset, and JwtBearer then finds no keys: every token
+fails with IDX10500.
 
 ## Registering an MCP client
 

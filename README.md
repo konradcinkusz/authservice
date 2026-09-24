@@ -129,7 +129,7 @@ Two modes, selected by `Jwt:Algorithm`:
 | `Jwt:Algorithm` | `HS256` or `RS256`. Unset, it is inferred: `RS256` when a private key is configured, `HS256` otherwise |
 | `Jwt:PrivateKeyPem` / `Jwt:PrivateKeyPath` | PKCS#8 RSA private key (2048-bit minimum). Required under RS256 |
 | `Jwt:PreviousPublicKeyPem` / `Jwt:PreviousPublicKeyPath` | A retired public key, kept valid for verification while tokens signed with it are still alive |
-| `Jwt:PublicBaseUrl` | Public origin of this service, used to build `jwks_uri`. Defaults to the request's own scheme and host. Required, as an https origin, once an MCP client is configured, because it is then also the issuer of MCP tokens |
+| `Jwt:PublicBaseUrl` | Public origin of this service, used to build `jwks_uri`. Defaults to the request's own scheme and host. Required, as an https origin, once an MCP client is configured, because it is then also the issuer of MCP tokens. Releases before v0.3.4 served a relative `jwks_uri` when it was left empty, which JwtBearer cannot fetch keys from, so set it on those |
 
 **HS256** is the zero-ceremony default and is correct while this service is the only thing
 validating its own tokens. Verifying and signing are the same capability under a symmetric
@@ -274,19 +274,25 @@ migration — in [`docs/schema/README.md`](docs/schema/README.md).
 
 ## Releasing
 
-`.github/workflows/publish-image.yml` publishes a version-pinned image to
-`ghcr.io/konradcinkusz/authservice:<tag>` automatically whenever a `v*` tag is pushed —
-which is exactly what happens when you **publish a GitHub Release** (create a release,
-set the tag to e.g. `v0.1.0`, publish). It can also be run manually from the Actions tab
+The repository publishes two things, each from its own tag namespace, so either can be
+released without the other:
+
+| Tag | Workflow | Publishes |
+| --- | --- | --- |
+| `v*`, e.g. `v0.3.4` | `.github/workflows/publish-image.yml` | The service image, as `ghcr.io/konradcinkusz/authservice:<tag>` and `:latest` |
+| `mcp-v*`, e.g. `mcp-v0.1.1` | `.github/workflows/publish-mcp.yml` | The [`integrate` MCP server](#mcp-integration-server) as self-contained binaries, attached to that tag's release |
+
+**Publish a GitHub Release** with a new tag, and the tag push starts the workflow.
+`publish-mcp.yml` uploads to the release for its tag, so for `mcp-v*` create the release
+rather than pushing the tag alone. Both workflows can also be run by hand from the Actions tab
 (`workflow_dispatch`).
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+When publishing an `mcp-v*` release, untick **Set as the latest release**, so that the
+repository page and `releases/latest` keep pointing at the service. The binaries report the
+tag's version in the MCP handshake.
 
 **No secrets to configure.** This repo doesn't deploy itself anywhere — the only
-credential the workflow uses is the automatic `GITHUB_TOKEN`.
+credential the workflows use is the automatic `GITHUB_TOKEN`.
 
 One-time step after your first release: the GHCR package is created **private** by
 default even though the repo is public — go to the package's own Settings on GitHub and
@@ -311,7 +317,7 @@ app = "<yourproject>-authservice"
 primary_region = "fra"
 
 [build]
-  image = "ghcr.io/konradcinkusz/authservice:v0.3.2"   # pin a real tag, don't float :latest
+  image = "ghcr.io/konradcinkusz/authservice:v0.3.4"   # pin a real tag, don't float :latest
 
 [env]
   ASPNETCORE_ENVIRONMENT = "Production"
@@ -335,7 +341,7 @@ primary_region = "fra"
 ```
 
 Deploy it with `flyctl deploy --config flyio/authservice.fly.toml --app
-<yourproject>-authservice --image ghcr.io/konradcinkusz/authservice:v0.3.2`, with
+<yourproject>-authservice --image ghcr.io/konradcinkusz/authservice:v0.3.4`, with
 `ConnectionStrings__DefaultConnection` and `Jwt__PrivateKeyPem` set as Fly secrets pointing
 at *that project's own* database and *that project's own*, independently generated
 signing key ([Token signing](#token-signing)). Never reuse a signing key or database across
@@ -417,11 +423,21 @@ the decision to move to RS256 are recorded in
 ## MCP integration server
 
 [`src/AuthService.Mcp`](src/AuthService.Mcp/README.md) is an MCP (Model Context Protocol)
-server that wires authservice into a consumer project for you: point an MCP client (Claude
-Code, Claude Desktop, ...) at it and call its single `integrate` tool to detect the
-consumer's stack, scaffold `docker-compose.yml` and a JWT validation snippet, generate a
-fresh signing key, pin a real release tag, and optionally deploy — see that directory's
-README for the client config and the tool's parameters.
+server that wires authservice into a consumer project for you. Point an MCP client (Claude
+Code, Claude Desktop, ...) at it and call its single `integrate` tool, and it:
+
+- detects the consumer's stack (ASP.NET Core, Node/Express or Python/FastAPI);
+- adds authservice to `docker-compose.yml`, pinned to the latest release;
+- generates a fresh signing key, mounts it into the container as a compose secret, and keeps it
+  out of git;
+- gives the project its own token issuer and audience;
+- writes the JWT validation code for the stack;
+- optionally deploys.
+
+Only the database connection string is left for you to fill in. Self-contained binaries for
+Linux, macOS and Windows are attached to each `mcp-v*`
+[release](https://github.com/konradcinkusz/authservice/releases); that directory's README has
+the client config and the tool's parameters.
 
 This is a different use of MCP from the authorization server above. Here, authservice ships an
 MCP server that helps you set authservice up. There, authservice signs users in so that MCP
