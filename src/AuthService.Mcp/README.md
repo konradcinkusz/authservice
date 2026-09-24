@@ -96,3 +96,5 @@ binaries for linux-x64, linux-arm64, osx-x64, osx-arm64, and win-x64 to that rel
 
 Untick **Set as the latest release** when publishing it, so that the repository page and
 `releases/latest` keep pointing at the service. `integrate` pins only `v*` releases either way.
+The workflow passes the tag's version to the build, so the binary reports it in the MCP
+handshake.

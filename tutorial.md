@@ -25,7 +25,10 @@ ASP.NET Core (.NET 10) that provides:
   invitations,
 - an admin API (user, role, and lockout management),
 - consent tracking (Terms/Privacy/Cookies) for GDPR compliance,
-- PostgreSQL (default) or SQL Server as the database.
+- PostgreSQL (default) or SQL Server as the database,
+- optionally, an OAuth 2.1 authorization server through which MCP clients such as Claude call
+  *your* MCP server on your users' behalf (see
+  [Registering an MCP client](docs/DEPLOYMENT.md#registering-an-mcp-client)).
 
 The service is designed so that **other applications (frontend, backend, microservices)
 don't have to implement login themselves** — they just need to trust the JWT tokens
@@ -91,7 +94,7 @@ variables, or `dotnet user-secrets`):
 | --- | --- |
 | `ConnectionStrings:DefaultConnection` | database connection string |
 | `DatabaseProvider` | `PostgreSQL` (default) or `SqlServer` |
-| `Jwt:SecretKey` | symmetric key used to sign tokens (32+ characters) |
+| `Jwt:SecretKey` | symmetric key used to sign tokens (32+ characters). Fine locally; once another service validates the tokens, sign with an RSA key instead (`Jwt:PrivateKeyPem`, section 1.4) |
 | `Jwt:Issuer` / `Jwt:Audience` | default to `AuthService` |
 
 Optional: `OAuth:Google:*`, `OAuth:GitHub:*`, `SendGrid:*`, `InitialAdmin:*`,
@@ -115,11 +118,13 @@ instance of its own, on Fly.io or otherwise. What it does instead:
 1. **Publishing** (`.github/workflows/publish-image.yml`): every `v*` tag push (i.e.
    every GitHub Release) builds `src/AuthService/Dockerfile` and pushes it to
    `ghcr.io/konradcinkusz/authservice:<tag>`. No secrets to configure — the only
-   credential involved is the automatic `GITHUB_TOKEN`.
+   credential involved is the automatic `GITHUB_TOKEN`. `mcp-v*` releases are a separate line
+   that publishes the `integrate` MCP server's binaries; the README's
+   [Releasing](README.md#releasing) section covers both.
 
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag v<version>
+   git push origin v<version>
    ```
 
    One-time step after your first release: the GHCR package is created **private** by
@@ -128,7 +133,7 @@ instance of its own, on Fly.io or otherwise. What it does instead:
 
 2. **Deploying** is something *your own project* does, pulling that image. Each project
    that uses authservice runs its own independent instance — own compute, own database,
-   own `Jwt:SecretKey` — never a shared central deployment. Example `fly.toml` for a
+   own signing key — never a shared central deployment. Example `fly.toml` for a
    project deploying to Fly.io:
 
    ```toml
@@ -137,7 +142,7 @@ instance of its own, on Fly.io or otherwise. What it does instead:
    primary_region = "fra"
 
    [build]
-     image = "ghcr.io/konradcinkusz/authservice:v0.3.2"   # pin a real tag
+     image = "ghcr.io/konradcinkusz/authservice:v0.3.4"   # pin a real tag
 
    [env]
      ASPNETCORE_ENVIRONMENT = "Production"
@@ -145,19 +150,32 @@ instance of its own, on Fly.io or otherwise. What it does instead:
      DatabaseProvider = "PostgreSQL"
      Jwt__Issuer = "<YourProject>"
      Jwt__Audience = "<YourProject>"
+     Jwt__PublicBaseUrl = "https://<yourproject>-authservice.fly.dev"
    ```
 
    ```bash
    flyctl deploy --config flyio/authservice.fly.toml \
      --app <yourproject>-authservice \
-     --image ghcr.io/konradcinkusz/authservice:v0.3.2
+     --image ghcr.io/konradcinkusz/authservice:v0.3.4
    ```
 
-   Set `ConnectionStrings__DefaultConnection` and `Jwt__SecretKey` as Fly secrets on
-   *your* app, pointing at *your* database, with a signing key generated fresh for that
-   instance — never reused across projects. Not on Fly? The same image runs anywhere
-   that runs containers; only the image reference and how you set those two secrets
-   change.
+   Generate an RSA signing key for this instance, and set it and the connection string to
+   *your* database as Fly secrets on *your* app:
+
+   ```bash
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt-signing.pem
+
+   fly secrets set --app <yourproject>-authservice \
+     "ConnectionStrings__DefaultConnection=Host=<host>;Port=5432;Database=authservice;Username=<user>;Password=<password>" \
+     "Jwt__PrivateKeyPem=$(cat jwt-signing.pem)"
+   ```
+
+   The key is generated fresh for this instance, never reused across projects, and it never
+   leaves authservice: the services that validate its tokens fetch only the public half
+   ([section 3](#3-how-external-applications-can-use-authservice)). Not on Fly? The same image
+   runs anywhere that runs containers; only the image reference and how you set those two
+   secrets change. [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) has the full reference
+   `fly.toml`, with health checks.
 
 ### 1.5. Database schema
 
@@ -285,6 +303,11 @@ Also available: `GET /api/admin/users/{userId}`, `/users/deleted`,
 `authservice` is meant to act as a **central identity provider** for an ecosystem of
 other services — frontends and backends that don't implement login themselves.
 
+> The quickest route is to let an agent do it. The `integrate` MCP server
+> ([`src/AuthService.Mcp`](src/AuthService.Mcp/README.md)) adds authservice to your project's
+> `docker-compose.yml` with a fresh signing key, and writes the validation code this section
+> describes for ASP.NET Core, Express or FastAPI.
+
 ### 3.1. Integration model
 
 1. The frontend (SPA/mobile) talks to `authservice` directly: registration, login,
@@ -293,13 +316,21 @@ other services — frontends and backends that don't implement login themselves.
 2. The frontend attaches the `accessToken` as `Authorization: Bearer <token>` to calls
    to **other** backend services (your actual product/API).
 3. **Those other services don't need to call back into authservice** to validate the
-   token — they just need to know the same `Jwt:SecretKey`, `Jwt:Issuer`, and
-   `Jwt:Audience` and verify the JWT signature locally (a standard JWT Bearer
-   middleware, available in practically every framework: ASP.NET Core, Express +
-   `jsonwebtoken`, FastAPI + `python-jose`, Spring Security, etc.).
+   token. authservice signs with RS256 and publishes its public key at
+   `/.well-known/jwks.json`, which `/.well-known/openid-configuration` points to. Each
+   service fetches it once, and again when its cache expires, then verifies signatures
+   locally. It needs only authservice's URL and the `Jwt:Issuer` and `Jwt:Audience`
+   authservice runs with. Any JWT library that reads a JWKS does this: ASP.NET Core's JWT
+   Bearer, Express with `express-jwt` and `jwks-rsa`, FastAPI with `python-jose` or PyJWT,
+   Spring Security, and so on.
 
 This makes authorization **stateless and fast** — product services don't need to ask
-authservice on every request, only verify the signature locally once.
+authservice on every request, only verify the signature locally.
+
+HS256, the zero-configuration default, has no public half. Every validating service would
+need the signing secret itself, and could then mint tokens for any user with any role. Keep
+it for when authservice is the only thing validating its own tokens; see
+[ADR 0002](docs/decisions/0002-token-signing-algorithm.md).
 
 ### 3.2. What's in the token (claims)
 
@@ -321,43 +352,36 @@ token.
 ### 3.3. Example: verifying a JWT in another ASP.NET Core service
 
 ```csharp
-// Program.cs of another service — same values as in authservice
-var jwtSecretKey = builder.Configuration["Jwt:SecretKey"];
-var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "AuthService";
-var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "AuthService";
-
+// Program.cs of another service: authservice's URL, and the issuer and audience it runs with
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        options.MetadataAddress =
+            "https://<yourproject>-authservice.fly.dev/.well-known/openid-configuration";
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidateIssuer = true,
-            ValidateAudience = true,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            ValidIssuer = jwtIssuer,
-            ValidAudience = jwtAudience,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecretKey)),
-            ClockSkew = TimeSpan.Zero
+            ValidIssuer = "<YourProject>",
+            ValidAudience = "<YourProject>",
+            ValidateIssuerSigningKey = true
         };
     });
 ```
 
-This configuration is identical to the one in `src/AuthService/Program.cs` — just
-provide the same secret, issuer, and audience as environment variables in the other
-service (e.g. `Jwt__SecretKey`) and it will start accepting tokens issued by
-`authservice`, without knowing anything about the database or making any network call
-to authservice.
+JWT Bearer reads the discovery document, follows its `jwks_uri` to the public key, and checks
+the signature, issuer, audience and lifetime locally. The service holds no secret and makes
+no call to authservice per request. When authservice rotates its key, keeping the retired one
+in `Jwt:PreviousPublicKeyPem` for a while, the next key-set refresh picks up the new one.
 
-For services in other tech stacks, the principle is the same: any JWT library (HS256,
-symmetric key) will verify the token as long as it knows the same
-`SecretKey`/`Issuer`/`Audience`.
+Against a local authservice on plain http, add `options.RequireHttpsMetadata = false;`, and
+only there. For other stacks, point the library's JWKS setting at
+`https://<yourproject>-authservice.fly.dev/.well-known/jwks.json`, with the same issuer and
+audience.
 
 ### 3.4. CORS configuration for frontends
 
 If a frontend calls authservice directly from the browser, its origin must be listed in
-`Cors:AllowedOrigins` (locally) or the `CORS_ALLOWED_ORIGIN` variable (Fly.io/
-production).
+`Cors:AllowedOrigins`: in `appsettings` locally, or as `Cors__AllowedOrigins__0`,
+`Cors__AllowedOrigins__1`, … environment variables in production.
 
 ### 3.5. Rate limiting
 
@@ -435,6 +459,10 @@ dotnet test
 ## 6. Further reading
 
 - [`README.md`](README.md) — full configuration and API reference.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — the deployment runbook: what the container
+  needs, the reference `fly.toml`, and registering an MCP client.
+- [`src/AuthService.Mcp/README.md`](src/AuthService.Mcp/README.md) — the `integrate` MCP
+  server.
 - [`DEMO.md`](DEMO.md) — the raw demo script described in section 4.
 - [`EXTRACTION.md`](EXTRACTION.md) — the history and rationale behind extracting this
   service from a larger project, what was kept, and what was intentionally dropped.
