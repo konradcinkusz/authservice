@@ -61,14 +61,22 @@ public class AccountCleanupTests : IntegrationTestBase
         var live = await Factory.CreateAccountAsync();
         var waiting = await Factory.CreateAccountAsync();
         var unscheduled = await Factory.CreateAccountAsync();
+        var restored = await Factory.CreateAccountAsync();
         await ScheduleDeletionAsync(waiting.Email, DateTime.UtcNow.AddDays(3));
         await ScheduleDeletionAsync(unscheduled.Email, null);
+        // A schedule left behind on an account that was restored must not take it.
+        await Factory.UpdateUserAsync(restored.Email, u =>
+        {
+            u.IsDeleted = false;
+            u.ScheduledPermanentDeletionAt = DateTime.UtcNow.AddMinutes(-1);
+        });
 
         await NewReaper().CleanupExpiredUsersAsync(CancellationToken.None);
 
         Assert.True(await ExistsAsync(live.Email));
         Assert.True(await ExistsAsync(waiting.Email));
         Assert.True(await ExistsAsync(unscheduled.Email));
+        Assert.True(await ExistsAsync(restored.Email));
     }
 
     [Fact]

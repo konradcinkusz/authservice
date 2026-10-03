@@ -441,6 +441,19 @@ public class ExternalLoginCallbackTests : IntegrationTestBase
             Assert.Single(await services.GetRequiredService<ApplicationDbContext>().OAuthExchangeCodes.ToListAsync()));
     }
 
+    [Fact]
+    public async Task Issuing_a_code_leaves_the_codes_other_people_are_about_to_use_alone()
+    {
+        var first = (await CallbackAsync(Google(TestData.NewEmail("first"), "key-first"))).QueryValue("code");
+        var second = (await CallbackAsync(Google(TestData.NewEmail("second"), "key-second"))).QueryValue("code");
+
+        var firstExchange = await ExchangeAsync(first);
+        var secondExchange = await ExchangeAsync(second);
+
+        Assert.Equal(HttpStatusCode.OK, firstExchange.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, secondExchange.StatusCode);
+    }
+
     [Theory]
     [InlineData("deleted")]
     [InlineData("locked")]
