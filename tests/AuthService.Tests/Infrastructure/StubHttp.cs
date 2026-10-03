@@ -5,6 +5,7 @@ public sealed class StubHttpHandler(Func<HttpRequestMessage, HttpResponseMessage
 {
     private readonly object _gate = new();
     private readonly List<HttpRequestMessage> _requests = [];
+    private readonly List<string?> _bodies = [];
 
     public IReadOnlyList<HttpRequestMessage> Requests
     {
@@ -15,12 +16,27 @@ public sealed class StubHttpHandler(Func<HttpRequestMessage, HttpResponseMessage
         }
     }
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    /// <summary>What each request carried, read as it arrived: a client disposes the content once the call is over.</summary>
+    public IReadOnlyList<string?> Bodies
     {
-        lock (_gate)
-            _requests.Add(request);
+        get
+        {
+            lock (_gate)
+                return [.. _bodies];
+        }
+    }
 
-        return Task.FromResult(respond(request));
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+
+        lock (_gate)
+        {
+            _requests.Add(request);
+            _bodies.Add(body);
+        }
+
+        return respond(request);
     }
 }
 
