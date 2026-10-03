@@ -39,10 +39,18 @@ public class ExternalAuthController(
     /// <param name="returnUrl">Frontend URL to redirect to after successful authentication</param>
     [HttpGet("login")]
     [EnableRateLimiting("auth")]
-    public IActionResult Login([FromQuery] string provider, [FromQuery] string? returnUrl = null)
+    public async Task<IActionResult> Login([FromQuery] string provider, [FromQuery] string? returnUrl = null)
     {
-        if (string.IsNullOrWhiteSpace(provider) || !AllowedProviders.Contains(provider, StringComparer.OrdinalIgnoreCase))
+        // The allow-list ignores case, but an authentication scheme is looked up by its exact
+        // name, so hand the handler the name it was registered under.
+        var canonicalProvider = AllowedProviders.FirstOrDefault(p => string.Equals(p, provider, StringComparison.OrdinalIgnoreCase));
+        if (canonicalProvider == null)
             return BadRequest(new { error = $"Unsupported provider. Allowed: {string.Join(", ", AllowedProviders)}" });
+
+        // Allowed is not configured: a provider with no credentials has no handler to hand off to.
+        var configuredSchemes = await _signInManager.GetExternalAuthenticationSchemesAsync();
+        if (!configuredSchemes.Any(s => s.Name == canonicalProvider))
+            return BadRequest(new { error = $"{canonicalProvider} sign-in is not configured on this server." });
 
         var postLoginBase = _configuration["OAuth:PostLoginRedirectBaseUrl"]
             ?? throw new InvalidOperationException("OAuth:PostLoginRedirectBaseUrl is not configured.");
@@ -78,13 +86,13 @@ public class ExternalAuthController(
             ? Url.Action(nameof(Callback), "ExternalAuth", values: null, protocol: Request.Scheme)!
             : $"{callbackBaseUrl.TrimEnd('/')}/api/external-auth/callback";
 
-        var properties = _signInManager.ConfigureExternalAuthenticationProperties(provider, callbackUrl);
+        var properties = _signInManager.ConfigureExternalAuthenticationProperties(canonicalProvider, callbackUrl);
 
         // returnUrl is stored in the OAuth state (opaque to Google / GitHub), NOT in the
         // callback URL, so it never affects redirect URI matching.
         properties.Items["returnUrl"] = callbackReturnUrl;
 
-        return Challenge(properties, provider);
+        return Challenge(properties, canonicalProvider);
     }
 
     /// <summary>
