@@ -114,7 +114,10 @@ happens rather than as set-up:
   `appsettings.json` already gives the key a value.
 
 To see what the tests do not reach, collect coverage and read the missed lines rather than the
-percentage. Generated code (migrations) and record-only DTOs make most of the misses:
+percentage. What is left is mostly startup guards in `Program.cs`, EF design-time tooling,
+record-only DTOs, glue that only runs at shutdown, the `catch` around a background service's loop,
+and the validation branches `[ApiController]` makes unreachable; read the lines before writing a
+test for one:
 
 ```bash
 dotnet tool install --global dotnet-coverage
