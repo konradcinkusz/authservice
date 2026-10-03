@@ -229,4 +229,91 @@ public class JwtSigningKeysTests
         Assert.Equal(keys.ValidationKeys[0].KeyId, keys.SigningKey.KeyId);
         Assert.NotEqual(keys.ValidationKeys[1].KeyId, keys.SigningKey.KeyId);
     }
+
+    [Fact]
+    public void Keeps_every_retired_key_given_in_a_list_as_well_as_the_single_one()
+    {
+        var current = GeneratePrivateKeyPem();
+
+        using var keys = Build(
+            ("Jwt:PrivateKeyPem", current),
+            ("Jwt:PreviousPublicKeyPem", PublicKeyPemOf(GeneratePrivateKeyPem())),
+            ("Jwt:PreviousPublicKeys:0", PublicKeyPemOf(GeneratePrivateKeyPem())),
+            ("Jwt:PreviousPublicKeys:1", PublicKeyPemOf(GeneratePrivateKeyPem())),
+            ("Jwt:PreviousPublicKeys:2", "   "));
+
+        Assert.Equal(4, keys.ValidationKeys.Count);
+        Assert.Equal(4, keys.ValidationKeys.Select(k => k.KeyId).Distinct().Count());
+    }
+
+    [Fact]
+    public void Rejects_a_retired_key_that_is_not_a_PEM_public_key()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() => Build(
+            ("Jwt:PrivateKeyPem", GeneratePrivateKeyPem()),
+            ("Jwt:PreviousPublicKeys:0", "this is not a key")));
+
+        Assert.Contains("Jwt:PreviousPublicKeyPem contains a value that is not a readable PEM public key", exception.Message);
+    }
+
+    // ── Keys in files ──────────────────────────────────────────────────────────
+
+    private static string InFile(string contents)
+    {
+        var path = Path.GetTempFileName();
+        File.WriteAllText(path, contents);
+
+        return path;
+    }
+
+    [Fact]
+    public void Reads_the_private_key_and_a_retired_key_from_files_and_infers_RS256_from_the_path()
+    {
+        var current = GeneratePrivateKeyPem();
+        var retired = GeneratePrivateKeyPem();
+        var privatePath = InFile(current);
+        var previousPath = InFile(PublicKeyPemOf(retired));
+        try
+        {
+            using var fromFiles = Build(("Jwt:PrivateKeyPath", privatePath), ("Jwt:PreviousPublicKeyPath", previousPath));
+            using var inline = Build(("Jwt:PrivateKeyPem", current), ("Jwt:PreviousPublicKeyPem", PublicKeyPemOf(retired)));
+
+            Assert.Equal(JwtSigningAlgorithm.RS256, fromFiles.Algorithm);
+            Assert.Equal(inline.SigningKey.KeyId, fromFiles.SigningKey.KeyId);
+            Assert.Equal(2, fromFiles.ValidationKeys.Count);
+        }
+        finally
+        {
+            File.Delete(privatePath);
+            File.Delete(previousPath);
+        }
+    }
+
+    [Fact]
+    public void A_key_given_inline_wins_over_one_given_as_a_path()
+    {
+        var inlineKey = GeneratePrivateKeyPem();
+        var path = InFile(GeneratePrivateKeyPem());
+        try
+        {
+            using var keys = Build(("Jwt:PrivateKeyPem", inlineKey), ("Jwt:PrivateKeyPath", path));
+            using var expected = Build(("Jwt:PrivateKeyPem", inlineKey));
+
+            Assert.Equal(expected.SigningKey.KeyId, keys.SigningKey.KeyId);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Rejects_a_key_path_that_does_not_exist_naming_the_setting_and_the_path()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.pem");
+
+        var exception = Assert.Throws<InvalidOperationException>(() => Build(("Jwt:PrivateKeyPath", missing)));
+
+        Assert.Contains($"Jwt:PrivateKeyPath points at '{missing}', which does not exist.", exception.Message);
+    }
 }
