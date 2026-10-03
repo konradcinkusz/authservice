@@ -7,7 +7,9 @@ using AuthService.Tests.Infrastructure;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using OpenIddict.Abstractions;
 using Xunit;
+using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace AuthService.Tests;
 
@@ -116,6 +118,67 @@ public class AccountCleanupTests : IntegrationTestBase
 
         Assert.True(await ExistsAsync(stuck.Email));
         Assert.False(await ExistsAsync(other.Email));
+    }
+
+    [Fact]
+    public async Task An_account_whose_delete_is_lost_is_reported_and_does_not_hold_up_the_rest()
+    {
+        // The delete runs and changes nothing, as if someone had just changed the account: Identity
+        // answers with a failed result, not an exception, which is a different way out of the loop.
+        var contested = await Factory.CreateAccountAsync();
+        var other = await Factory.CreateAccountAsync();
+        await ScheduleDeletionAsync(contested.Email, DateTime.UtcNow.AddDays(-2));
+        await ScheduleDeletionAsync(other.Email, DateTime.UtcNow.AddMinutes(-1));
+        await Factory.MakeDeleteLostAsync("AspNetUsers", contested.Id);
+        var log = new ListLogger<UserCleanupService>();
+        var reaper = new UserCleanupService(
+            Factory.Services.GetRequiredService<IServiceScopeFactory>(), log, Factory.Services.GetRequiredService<IMigrationCompletionSignal>());
+
+        await reaper.CleanupExpiredUsersAsync(CancellationToken.None);
+
+        Assert.True(await ExistsAsync(contested.Email));
+        Assert.False(await ExistsAsync(other.Email));
+        Assert.Contains(log.Messages, m => m.StartsWith($"Failed to permanently delete user {contested.Id}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Tokens_the_authorization_server_issued_to_the_account_go_with_it_even_without_an_authorization()
+    {
+        var leaving = await Factory.CreateAccountAsync();
+        var staying = await Factory.CreateAccountAsync();
+        await AddAuthorizationServerTokenAsync(leaving.Id);
+        await AddAuthorizationServerTokenAsync(leaving.Id);
+        await AddAuthorizationServerTokenAsync(staying.Id);
+        await ScheduleDeletionAsync(leaving.Email, DateTime.UtcNow.AddMinutes(-1));
+
+        await NewReaper().CleanupExpiredUsersAsync(CancellationToken.None);
+
+        Assert.False(await ExistsAsync(leaving.Email));
+        Assert.Equal(0, await AuthorizationServerTokensOfAsync(leaving.Id));
+        Assert.Equal(1, await AuthorizationServerTokensOfAsync(staying.Id));
+    }
+
+    private Task AddAuthorizationServerTokenAsync(string subject) =>
+        Factory.WithScopeAsync(async services =>
+            await services.GetRequiredService<IOpenIddictTokenManager>().CreateAsync(new OpenIddictTokenDescriptor
+            {
+                Subject = subject,
+                Type = TokenTypeHints.RefreshToken,
+                Status = Statuses.Valid,
+                CreationDate = DateTimeOffset.UtcNow,
+                ExpirationDate = DateTimeOffset.UtcNow.AddDays(1)
+            }));
+
+    private async Task<int> AuthorizationServerTokensOfAsync(string subject)
+    {
+        var count = 0;
+        await Factory.WithScopeAsync(async services =>
+        {
+            await foreach (var _ in services.GetRequiredService<IOpenIddictTokenManager>().FindBySubjectAsync(subject))
+                count++;
+        });
+
+        return count;
     }
 
     [Fact]

@@ -143,10 +143,15 @@ public class AuthorizationServerFactory : WebApplicationFactory<Program>
                             && d.ImplementationType.Assembly == typeof(Program).Assembly)
                 .ToList();
 
+            AppHostedServices = hostedToRemove.Select(d => d.ImplementationType!).ToList();
+
             foreach (var descriptor in hostedToRemove)
                 services.Remove(descriptor);
         });
     }
+
+    /// <summary>The application's own background services as it registers them, read when the host is built, before this factory takes them out.</summary>
+    public IReadOnlyCollection<Type> AppHostedServices { get; private set; } = [];
 
     /// <summary>Creates the schema, seeds roles, and marks the service ready.</summary>
     public async Task InitializeAsync()
