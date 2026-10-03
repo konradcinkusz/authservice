@@ -88,6 +88,11 @@ public class OrganizationCleanupService : BackgroundService
                 _logger.LogError(ex,
                     "Failed to permanently delete organization {OrganizationId}",
                     organization.Id);
+
+                // The organization that failed is still tracked as deleted, so the next SaveChanges
+                // would try it again and fail again, and every later one with it. Forget it, so one
+                // organization that cannot be deleted does not hold up the rest.
+                context.ChangeTracker.Clear();
             }
         }
     }

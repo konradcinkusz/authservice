@@ -124,14 +124,24 @@ public class UserCleanupService : BackgroundService
                     _logger.LogWarning(
                         "Failed to permanently delete user {UserId}: {Errors}",
                         user.Id, string.Join(", ", result.Errors.Select(e => e.Description)));
+                    ForgetFailedDeletion(scope);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to permanently delete user account {UserId}", user.Id);
+                ForgetFailedDeletion(scope);
             }
         }
     }
+
+    /// <summary>
+    /// The account that failed is still tracked as deleted, so the next SaveChanges would try it
+    /// again and fail again, and every later one with it. Forget it, so one account that cannot be
+    /// deleted does not hold up the rest.
+    /// </summary>
+    private static void ForgetFailedDeletion(IServiceScope scope) =>
+        scope.ServiceProvider.GetRequiredService<ApplicationDbContext>().ChangeTracker.Clear();
 
     /// <summary>Deletes every authorization and token the authorization server holds for the user.</summary>
     internal static async Task DeleteAuthorizationServerRowsAsync(IServiceProvider services, string userId, CancellationToken cancellationToken)
