@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using AuthService.Data;
 using AuthService.Extensions;
@@ -7,7 +8,9 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using AuthService.Services;
 
 namespace AuthService.Tests.Infrastructure;
 
@@ -67,6 +70,9 @@ public class AuthServiceFactory : WebApplicationFactory<Program>
 
     private bool _databaseInitialized;
 
+    /// <summary>Every email the application tried to send, instead of a provider.</summary>
+    public CapturingEmailService Emails { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
@@ -93,6 +99,11 @@ public class AuthServiceFactory : WebApplicationFactory<Program>
 
             _connection.Open();
             services.AddDbContext<ApplicationDbContext>(options => options.UseSqlite(_connection));
+
+            // Email goes to a recorder. EmailCapabilities is a separate registration and is left
+            // alone, so the service still behaves as a deployment with no provider configured.
+            services.RemoveAll<IEmailService>();
+            services.AddSingleton<IEmailService>(Emails);
 
             // Drop the app's own background services. Schema creation and seeding happen
             // deterministically in InitializeAsync instead of racing the first request, and the
@@ -129,6 +140,26 @@ public class AuthServiceFactory : WebApplicationFactory<Program>
         _databaseInitialized = true;
     }
 
+    private readonly List<HttpClient> _clients = [];
+
+    /// <summary>
+    /// A client of its own that acts as <paramref name="tokens"/>, or anonymously. Kept and
+    /// disposed with the factory, so a test can act as several people at once without swapping
+    /// one shared client's authorization header between requests.
+    /// </summary>
+    public HttpClient ClientFor(TestTokens? tokens = null)
+    {
+        var client = CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        if (tokens is not null)
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+        lock (_clients)
+            _clients.Add(client);
+
+        return client;
+    }
+
     /// <summary>Runs <paramref name="action"/> against a fresh service scope.</summary>
     public async Task WithScopeAsync(Func<IServiceProvider, Task> action)
     {
@@ -139,7 +170,13 @@ public class AuthServiceFactory : WebApplicationFactory<Program>
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
+            lock (_clients)
+                foreach (var client in _clients)
+                    client.Dispose();
+
             _connection.Dispose();
+        }
 
         base.Dispose(disposing);
     }
