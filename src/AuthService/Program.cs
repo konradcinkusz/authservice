@@ -279,10 +279,10 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
             IPAddress.TryParse(parts[0], out var prefix) &&
             int.TryParse(parts[1], out var prefixLength))
         {
-            // System.Net.IPNetwork — unlike the HttpOverrides type it replaced — insists the
-            // base address is the network address, so "10.0.0.5/8" throws where it used to be
-            // quietly accepted. Skipped like any other malformed entry rather than taken down
-            // the process at startup.
+            // System.Net.IPNetwork masks the host bits of an entry, as the HttpOverrides type it
+            // replaced did: "10.0.0.5/8" is taken as all of 10.0.0.0/8, not as one host. It does
+            // refuse an impossible prefix, and that entry is skipped like any other malformed one
+            // rather than taken down the process at startup.
             // Qualified because Microsoft.AspNetCore.HttpOverrides is also in scope and still
             // exports a type of the same name.
             if (System.Net.IPNetwork.TryParse($"{prefix}/{prefixLength}", out var parsed))
