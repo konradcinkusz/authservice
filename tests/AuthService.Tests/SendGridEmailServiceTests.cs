@@ -3,8 +3,6 @@ using System.Text.Json;
 using AuthService.Services;
 using AuthService.Tests.Infrastructure;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging.Abstractions;
-using SendGrid;
 using Xunit;
 
 namespace AuthService.Tests;
@@ -16,13 +14,6 @@ namespace AuthService.Tests;
 public class SendGridEmailServiceTests
 {
     private const string Token = "token-value_123";
-
-    private sealed class Service(IConfiguration configuration, HttpMessageHandler handler)
-        : SendGridEmailService(configuration, NullLogger<SendGridEmailService>.Instance)
-    {
-        protected override ISendGridClient NewClient(string apiKey) =>
-            new SendGridClient(new HttpClient(handler), new SendGridClientOptions { ApiKey = apiKey });
-    }
 
     private sealed record Message(string To, string FromEmail, string? FromName, string Subject, string Text, string Html, string Authorization);
 
@@ -47,7 +38,7 @@ public class SendGridEmailServiceTests
     {
         var handler = Accepting();
 
-        await send(new Service(configuration ?? Configuration(), handler));
+        await send(new StubbedSendGridEmailService(configuration ?? Configuration(), handler));
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
@@ -179,6 +170,41 @@ public class SendGridEmailServiceTests
         Assert.Contains("a=1&amp;b=&quot;2&quot;", verification.Html);
     }
 
+    // ─── A message the provider refuses ──────────────────────────────────────
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task A_message_the_provider_refuses_is_an_error_whichever_message_it_is_and_the_providers_words_stay_out_of_it(
+        HttpStatusCode status)
+    {
+        var handler = new StubHttpHandler(_ => new HttpResponseMessage(status)
+        {
+            Content = new StringContent("""{"errors":[{"message":"sender identity ops@internal.example is not verified"}]}""")
+        });
+        IEmailService service = new StubbedSendGridEmailService(Configuration(), handler);
+        var sends = new (string Kind, Func<Task> Send)[]
+        {
+            ("invitation", () => service.SendInvitationEmailAsync("a@example.test", "Acme", Token, "jane")),
+            ("reset", () => service.SendPasswordResetEmailAsync("a@example.test", Token, "https://app.example.test/reset")),
+            ("verification", () => service.SendEmailVerificationAsync("a@example.test", Token, "https://app.example.test/verify")),
+            ("welcome", () => service.SendWelcomeEmailAsync("a@example.test", "jane")),
+            ("linked", () => service.SendOAuthAccountLinkedEmailAsync("a@example.test", "Google")),
+        };
+
+        foreach (var (kind, send) in sends)
+        {
+            var failure = await Assert.ThrowsAsync<InvalidOperationException>(send);
+
+            Assert.True(
+                failure.Message == $"The email provider refused the message (HTTP {(int)status}).",
+                $"{kind}: {failure.Message}");
+        }
+
+        Assert.Equal(sends.Length, handler.Requests.Count);
+    }
+
     // ─── Configuration ───────────────────────────────────────────────────────
 
     [Fact]
@@ -199,7 +225,7 @@ public class SendGridEmailServiceTests
     public async Task A_message_cannot_be_sent_without_the_key_or_the_sender_address(string missing)
     {
         var handler = Accepting();
-        var service = new Service(Configuration((missing, null)), handler);
+        var service = new StubbedSendGridEmailService(Configuration((missing, null)), handler);
 
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendWelcomeEmailAsync("a@example.test", "a"));
 
