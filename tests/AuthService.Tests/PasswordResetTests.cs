@@ -87,6 +87,67 @@ public class PasswordResetTests : IntegrationTestBase
         Assert.DoesNotContain(Factory.Emails.Sent, e => e.Kind == EmailKind.PasswordReset);
     }
 
+    [Fact]
+    public async Task A_known_account_is_told_it_has_no_provider_to_use_instead()
+    {
+        var account = await Factory.CreateAccountAsync();
+
+        var response = await ForgotAsync(account.Email);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(body.GetProperty("isOAuthOnly").GetBoolean());
+        Assert.Contains("password reset link", body.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task An_account_with_no_password_is_pointed_at_its_provider_and_sent_no_link()
+    {
+        var email = TestData.NewEmail("social");
+        var signedIn = await Factory.CallbackAsync(new ProviderIdentity("Google", "google-key", email, EmailVerified: "true"));
+        Assert.NotNull(signedIn.QueryValue("code"));
+
+        var response = await ForgotAsync(email);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(body.GetProperty("isOAuthOnly").GetBoolean());
+        Assert.Contains("Google", body.GetProperty("message").GetString());
+        Assert.Empty(Factory.Emails.To(email, EmailKind.PasswordReset));
+    }
+
+    [Fact]
+    public async Task An_account_with_no_password_and_no_provider_is_told_to_use_its_social_account()
+    {
+        var email = TestData.NewEmail("orphan");
+        await Factory.WithScopeAsync(async services =>
+            (await services.GetRequiredService<UserManager<ApplicationUser>>()
+                .CreateAsync(new ApplicationUser { UserName = "orphan", Email = email })).ThrowIfFailed());
+
+        var response = await ForgotAsync(email);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(body.GetProperty("isOAuthOnly").GetBoolean());
+        Assert.Contains("your social account", body.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task A_failing_email_provider_does_not_fail_the_request_and_nothing_is_recorded_as_requested()
+    {
+        var account = await Factory.CreateAccountAsync();
+        Factory.Emails.FailWith = new InvalidOperationException("provider down");
+
+        var response = await ForgotAsync(account.Email);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(GenericMessage, await response.Content.ReadAsStringAsync());
+        Assert.Equal(0, await AuditCountAsync(AuditAction.PasswordResetRequested, account.Id));
+
+        Factory.Emails.FailWith = null;
+        await ForgotAsync(account.Email);
+        Assert.Single(Factory.Emails.To(account.Email, EmailKind.PasswordReset));
+        Assert.Equal(1, await AuditCountAsync(AuditAction.PasswordResetRequested, account.Id));
+    }
+
     // ─── Following a link ────────────────────────────────────────────────────
 
     [Fact]
