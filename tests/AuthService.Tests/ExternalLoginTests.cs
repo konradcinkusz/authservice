@@ -309,6 +309,31 @@ public class ExternalLoginCallbackTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task A_failing_email_provider_does_not_stop_a_sign_in()
+    {
+        Factory.Emails.FailWith = new InvalidOperationException("provider down");
+        var existing = await Factory.CreateAccountAsync();
+        var newcomer = TestData.NewEmail("newcomer");
+
+        var linked = await CallbackAsync(Google(existing.Email, "key-existing"));
+        var created = await CallbackAsync(Google(newcomer, "key-newcomer"));
+
+        Assert.NotNull(linked.QueryValue("code"));
+        Assert.NotNull(created.QueryValue("code"));
+        Assert.Equal("Google", Assert.Single(await LoginsAsync(existing.Email)).LoginProvider);
+        Assert.True(await Factory.ReadUserAsync(newcomer, u => u.EmailConfirmed));
+    }
+
+    [Fact]
+    public async Task An_address_the_provider_vouches_for_but_that_cannot_be_an_account_creates_nothing()
+    {
+        var response = await CallbackAsync(Google("not an address", verified: "true"));
+
+        AssertRefusedWith(response, "creation_failed");
+        Assert.Equal(0, await UserCountAsync());
+    }
+
+    [Fact]
     public async Task A_provider_identity_that_is_already_linked_signs_in_on_its_key_alone()
     {
         var existing = await Factory.CreateAccountAsync();

@@ -372,6 +372,18 @@ public class OrganizationLifecycleTests : IntegrationTestBase
         Assert.Empty(Factory.Emails.To(invitee));
     }
 
+    [Fact]
+    public async Task Deleting_an_organization_that_is_already_deleted_finds_nothing()
+    {
+        var team = await Factory.CreateTeamAsync();
+        await SoftDeleteAsync(team);
+
+        var again = await team.As(Who.Owner).DeleteAsync(team.Url());
+
+        Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
+        Assert.Single(await Factory.AuditAsync(AuditAction.OrganizationDeleted));
+    }
+
     // ─── Restoring ───────────────────────────────────────────────────────────
 
     [Theory]
