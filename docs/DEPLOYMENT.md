@@ -33,6 +33,7 @@ every version and what changed in it.
 | `Jwt__PublicBaseUrl` | with MCP clients | This service's public https origin. The issuer of MCP tokens; see [Registering an MCP client](#registering-an-mcp-client). Without it, `jwks_uri` comes from the request's own origin — from v0.3.4; older images need it set, see [Pointing a service at it](#pointing-a-service-at-it) |
 | `AuthorizationServer__Clients__0__…` | no | An MCP connector client. With none, the authorization server does not exist |
 | `AuthorizationServer__EncryptionKey` | with MCP clients | 32 random bytes, base64. A platform secret |
+| `FrontendBaseUrl` | with email | Your frontend's public address. Reset and verification emails link to `<it>/reset-password` and `<it>/verify-email`. Unset or blank it is `http://localhost:3000`: right for development, wrong for any deployment that sends email |
 | `ASPNETCORE_URLS` | no | Defaults to `http://+:8080` in the image |
 
 Everything else — OAuth credentials, SendGrid, CORS origins, consent versions — is optional and
