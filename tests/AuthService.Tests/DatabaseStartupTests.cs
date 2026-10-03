@@ -210,7 +210,7 @@ public class MigrationBackgroundServiceTests : IDisposable
     [Fact]
     public async Task A_database_that_cannot_be_reached_is_retried_and_never_reported_ready()
     {
-        await using var host = Host("EnsureCreated", $"Data Source={Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}", "auth.db")}");
+        await using var host = Host("EnsureCreated", $"Data Source={Path.Join(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}", "auth.db")}");
         using var service = new MigrationBackgroundService(host, _signal);
 
         await service.StartAsync(CancellationToken.None);

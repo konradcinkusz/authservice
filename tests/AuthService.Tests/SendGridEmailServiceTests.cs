@@ -38,7 +38,8 @@ public class SendGridEmailServiceTests
     {
         var handler = Accepting();
 
-        await send(new StubbedSendGridEmailService(configuration ?? Configuration(), handler));
+        using var service = new StubbedSendGridEmailService(configuration ?? Configuration(), handler);
+        await send(service);
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
@@ -183,7 +184,8 @@ public class SendGridEmailServiceTests
         {
             Content = new StringContent("""{"errors":[{"message":"sender identity ops@internal.example is not verified"}]}""")
         });
-        IEmailService service = new StubbedSendGridEmailService(Configuration(), handler);
+        using var stubbed = new StubbedSendGridEmailService(Configuration(), handler);
+        IEmailService service = stubbed;
         var sends = new (string Kind, Func<Task> Send)[]
         {
             ("invitation", () => service.SendInvitationEmailAsync("a@example.test", "Acme", Token, "jane")),
@@ -225,7 +227,7 @@ public class SendGridEmailServiceTests
     public async Task A_message_cannot_be_sent_without_the_key_or_the_sender_address(string missing)
     {
         var handler = Accepting();
-        var service = new StubbedSendGridEmailService(Configuration((missing, null)), handler);
+        using var service = new StubbedSendGridEmailService(Configuration((missing, null)), handler);
 
         var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SendWelcomeEmailAsync("a@example.test", "a"));
 

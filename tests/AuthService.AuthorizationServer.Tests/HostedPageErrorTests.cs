@@ -124,7 +124,7 @@ public class HostedPageErrorTests : IAsyncLifetime
         Assert.True(AuthorizationFlowClient.IsLocalRedirect(toConsent, "/connect/consent"), await AuthorizationFlowClient.DescribeAsync(toConsent));
         var consentLocation = toConsent.Headers.Location!.OriginalString;
         var query = QueryHelpers.ParseQuery(consentLocation[consentLocation.IndexOf('?')..])
-            .ToDictionary(q => q.Key, q => (string?)q.Value.ToString());
+            .ToDictionary(q => q.Key, q => q.Value.FirstOrDefault());
         query[parameter] = value;
 
         var response = await _flow.Browser.GetAsync(QueryHelpers.AddQueryString("/connect/consent", query));

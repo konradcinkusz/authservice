@@ -30,7 +30,11 @@ public class ForwardedHeadersConfigurationTests
 
     private static ForwardedHeadersOptions OptionsFor(params (string Key, string Value)[] settings)
     {
-        using var factory = new FactoryWith(settings.ToDictionary(s => s.Key, s => (string?)s.Value));
+        var values = new Dictionary<string, string?>();
+        foreach (var (key, value) in settings)
+            values[key] = value;
+
+        using var factory = new FactoryWith(values);
 
         return factory.Services.GetRequiredService<IOptions<ForwardedHeadersOptions>>().Value;
     }

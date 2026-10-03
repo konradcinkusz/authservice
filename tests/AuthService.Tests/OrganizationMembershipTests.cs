@@ -34,12 +34,11 @@ public class OrganizationMembershipTests : IntegrationTestBase
 
     private async Task<int> OwnerCountAsync(OrganizationTeam team)
     {
-        var count = 0;
+        var roles = new List<OrganizationRole?>();
         foreach (var who in new[] { Who.Owner, Who.Admin, Who.Member, Who.Outsider })
-            if (await Factory.RoleInAsync(team.Id, team[who].Id) == OrganizationRole.Owner)
-                count++;
+            roles.Add(await Factory.RoleInAsync(team.Id, team[who].Id));
 
-        return count;
+        return roles.Count(role => role == OrganizationRole.Owner);
     }
 
     // ─── Removing a member ───────────────────────────────────────────────────

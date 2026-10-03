@@ -136,7 +136,7 @@ public class ConsentTests : IntegrationTestBase
         await AgeConsentsAsync(account.Id);
 
         var response = await Factory.ClientFor(account.Tokens).PostAsJsonAsync("/api/v1/auth/consents",
-            new { acceptedTerms = false, acceptedPrivacy = (bool?)null });
+            new { acceptedTerms = false, acceptedPrivacy = default(bool?) });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var status = (await response.Content.ReadFromJsonAsync<ConsentStatusResponse>(TestData.Json))!;

@@ -310,7 +310,7 @@ public class JwtSigningKeysTests
     [Fact]
     public void Rejects_a_key_path_that_does_not_exist_naming_the_setting_and_the_path()
     {
-        var missing = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.pem");
+        var missing = Path.Join(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.pem");
 
         var exception = Assert.Throws<InvalidOperationException>(() => Build(("Jwt:PrivateKeyPath", missing)));
 

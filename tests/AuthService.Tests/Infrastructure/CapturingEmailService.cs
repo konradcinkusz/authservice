@@ -57,7 +57,11 @@ public sealed class CapturingEmailService : IEmailService
 
 public enum EmailKind { Invitation, PasswordReset, OAuthLinked, Welcome, Verification }
 
+/// <summary>One message the application tried to send, in the parts a test reads.</summary>
+/// <param name="Kind">Which message it was.</param>
+/// <param name="To">The address it was sent to.</param>
 /// <param name="Token">The credential in the message, when it carries one.</param>
 /// <param name="Url">The link in the message, when it carries one.</param>
 /// <param name="Detail">The organization, provider or display name, depending on the kind.</param>
+/// <param name="Inviter">Who sent the invitation, for an invitation.</param>
 public sealed record SentEmail(EmailKind Kind, string To, string? Token, string? Url, string? Detail, string? Inviter);

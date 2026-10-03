@@ -33,7 +33,7 @@ public class InvitationDeliveryFailureTests : IntegrationTestBase
         });
 
         services.RemoveAll<IEmailService>();
-        services.AddSingleton<IEmailService>(new StubbedSendGridEmailService(configuration, provider));
+        services.AddSingleton<IEmailService>(_ => new StubbedSendGridEmailService(configuration, provider));
     }
 
     [Fact]

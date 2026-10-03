@@ -57,7 +57,7 @@ public class ReadinessProbeTests : IDisposable
     [Fact]
     public async Task It_is_not_ready_when_the_database_cannot_be_reached()
     {
-        await using var context = NewContext($"Data Source={Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}", "auth.db")}");
+        await using var context = NewContext($"Data Source={Path.Join(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}", "auth.db")}");
         _signal.SetCompleted();
 
         var result = await CheckAsync(context, _signal);
@@ -87,8 +87,9 @@ public class MigrationCompletionSignalTests
     public async Task Waiting_ends_when_the_signal_is_set_and_setting_it_twice_changes_nothing()
     {
         var signal = new MigrationCompletionSignal();
+        using var cancellation = new CancellationTokenSource();
         var waiting = signal.WaitAsync();
-        var waitingWithToken = signal.WaitAsync(new CancellationTokenSource().Token);
+        var waitingWithToken = signal.WaitAsync(cancellation.Token);
         Assert.False(signal.IsCompleted);
         Assert.False(waiting.IsCompleted);
 

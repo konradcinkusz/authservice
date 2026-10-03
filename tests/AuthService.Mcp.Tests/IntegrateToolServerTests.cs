@@ -34,7 +34,7 @@ public sealed class IntegrateServerFixture : IAsyncLifetime
         {
             Name = "authservice-mcp-under-test",
             Command = host,
-            Arguments = [Path.Combine(AppContext.BaseDirectory, "AuthService.Mcp.dll")],
+            Arguments = [Path.Join(AppContext.BaseDirectory, "AuthService.Mcp.dll")],
             EnvironmentVariables = new Dictionary<string, string?>
             {
                 ["PATH"] = path,
@@ -79,13 +79,13 @@ public sealed class IntegrateToolServerTests(IntegrateServerFixture server) : IC
     }
 
     private void WriteExpressProject() =>
-        File.WriteAllText(Path.Combine(_project, "package.json"), """{ "dependencies": { "express": "^4.0.0" } }""");
+        File.WriteAllText(Path.Join(_project, "package.json"), """{ "dependencies": { "express": "^4.0.0" } }""");
 
-    private string Read(string relativePath) => File.ReadAllText(Path.Combine(_project, relativePath));
+    private string Read(string relativePath) => File.ReadAllText(Path.Join(_project, relativePath));
 
     private void InstallFakeDocker(int exitCode, string stdout, string stderr)
     {
-        var script = Path.Combine(server.Bin, "docker");
+        var script = Path.Join(server.Bin, "docker");
         File.WriteAllText(script, $"#!/bin/sh\necho \"{stdout} $@\"\necho \"{stderr}\" >&2\nexit {exitCode}\n");
 
         if (!OperatingSystem.IsWindows())
@@ -127,9 +127,9 @@ public sealed class IntegrateToolServerTests(IntegrateServerFixture server) : IC
         Assert.Contains("Image tag: latest", text);
         Assert.Contains("Deploy: skipped", text);
 
-        var key = Read(Path.Combine(".authservice", "signing-key.pem"));
+        var key = Read(Path.Join(".authservice", "signing-key.pem"));
         Assert.Contains("PRIVATE KEY", key);
-        Assert.Equal("*\n", Read(Path.Combine(".authservice", ".gitignore")));
+        Assert.Equal("*\n", Read(Path.Join(".authservice", ".gitignore")));
         Assert.Contains("ghcr.io/konradcinkusz/authservice:latest", Read("docker-compose.yml"));
         var issuer = Path.GetFileName(_project);
         var validation = Read("authservice-auth.js");
@@ -160,7 +160,7 @@ public sealed class IntegrateToolServerTests(IntegrateServerFixture server) : IC
     public async Task Integrating_again_updates_the_one_service_block_and_leaves_the_projects_own_services_alone()
     {
         WriteExpressProject();
-        File.WriteAllText(Path.Combine(_project, "docker-compose.yml"), "services:\n  web:\n    image: myapp:latest\n");
+        File.WriteAllText(Path.Join(_project, "docker-compose.yml"), "services:\n  web:\n    image: myapp:latest\n");
 
         await IntegrateAsync();
         await IntegrateAsync(("issuer", "second-run"));
@@ -185,7 +185,7 @@ public sealed class IntegrateToolServerTests(IntegrateServerFixture server) : IC
     [Fact]
     public async Task A_path_that_does_not_exist_is_refused_with_the_reason()
     {
-        var (isError, text) = await CallAsync(new() { ["targetPath"] = Path.Combine(_project, "missing") });
+        var (isError, text) = await CallAsync(new() { ["targetPath"] = Path.Join(_project, "missing") });
 
         Assert.True(isError);
         Assert.Contains("does not exist", text);
@@ -232,7 +232,7 @@ public sealed class IntegrateToolServerTests(IntegrateServerFixture server) : IC
 
         Assert.False(isError, text);
         Assert.Contains("docker compose up -d succeeded.", text);
-        Assert.Contains($"fake-docker compose -f {Path.Combine(_project, "docker-compose.yml")} up -d", text);
+        Assert.Contains($"fake-docker compose -f {Path.Join(_project, "docker-compose.yml")} up -d", text);
         Assert.DoesNotContain("Deploy: skipped", text);
     }
 
@@ -247,6 +247,6 @@ public sealed class IntegrateToolServerTests(IntegrateServerFixture server) : IC
         Assert.False(isError, text);
         Assert.Contains("docker compose up -d failed (exit code 3).", text);
         Assert.Contains("no such service: postgres", text);
-        Assert.True(File.Exists(Path.Combine(_project, "docker-compose.yml")));
+        Assert.True(File.Exists(Path.Join(_project, "docker-compose.yml")));
     }
 }

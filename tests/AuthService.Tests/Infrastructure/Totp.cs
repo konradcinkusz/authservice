@@ -11,7 +11,9 @@ public static class Totp
 {
     private const string Base32Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
+    /// <summary>The six-digit code an authenticator app would show for <paramref name="sharedKey"/> at the given time.</summary>
     /// <param name="sharedKey">The key as enrolment returns it: base32, possibly grouped with spaces.</param>
+    /// <param name="at">When the code is for; now when omitted.</param>
     public static string Code(string sharedKey, DateTimeOffset? at = null)
     {
         var key = DecodeBase32(sharedKey);
