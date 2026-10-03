@@ -42,6 +42,15 @@ public class ProviderEmailVerifierTests
     private static ProviderEmailVerifier Verifier(StubHttpHandler handler) =>
         new(new StubHttpClientFactory(handler), NullLogger<ProviderEmailVerifier>.Instance);
 
+    private static async Task<IReadOnlyList<string>> LoggedWhileVerifyingAsync(StubHttpHandler handler, ExternalLoginInfo info)
+    {
+        var log = new ListLogger<ProviderEmailVerifier>();
+
+        await new ProviderEmailVerifier(new StubHttpClientFactory(handler), log).VerifyAsync(info, Email);
+
+        return log.Messages;
+    }
+
     // ─── Google says it in a claim ───────────────────────────────────────────
 
     [Theory]
@@ -194,5 +203,37 @@ public class ProviderEmailVerifierTests
         Assert.Equal("verification_error", down.Reason);
         Assert.Equal("verification_error", nonsense.Reason);
         Assert.False(down.IsVerified || nonsense.IsVerified);
+    }
+
+    // ─── What is logged when GitHub cannot be asked ──────────────────────────
+
+    [Fact]
+    public async Task A_github_sign_in_with_no_access_token_is_logged_by_the_providers_key_and_not_the_address()
+    {
+        var message = Assert.Single(await LoggedWhileVerifyingAsync(NoCallsExpected(), Info("GitHub")));
+
+        Assert.Contains("provider-key", message);
+        Assert.DoesNotContain(Email, message);
+    }
+
+    [Fact]
+    public async Task A_github_emails_endpoint_that_fails_is_logged_by_the_providers_key_and_not_the_address()
+    {
+        var message = Assert.Single(await LoggedWhileVerifyingAsync(
+            GitHubSays("{}", HttpStatusCode.InternalServerError), Info("GitHub", accessToken: "token")));
+
+        Assert.Contains("InternalServerError", message);
+        Assert.Contains("provider-key", message);
+        Assert.DoesNotContain(Email, message);
+    }
+
+    [Fact]
+    public async Task A_github_call_that_throws_is_logged_by_the_providers_key_and_not_the_address()
+    {
+        var message = Assert.Single(await LoggedWhileVerifyingAsync(
+            new StubHttpHandler(_ => throw new HttpRequestException("connection refused")), Info("GitHub", accessToken: "token")));
+
+        Assert.Contains("provider-key", message);
+        Assert.DoesNotContain(Email, message);
     }
 }

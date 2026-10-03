@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace AuthService.Tests;
@@ -25,6 +26,10 @@ public class ExternalLoginEntryTests : IntegrationTestBase
         ["OAuth:Google:ClientSecret"] = "test-google-secret",
         ["OAuth:PostLoginRedirectAllowedBaseUrls:0"] = "https://app.example.test"
     };
+
+    private readonly ListLoggerProvider _logs = new();
+
+    protected override void ConfigureServices(IServiceCollection services) => services.AddSingleton<ILoggerProvider>(_logs);
 
     private Task<HttpResponseMessage> StartAsync(string provider, string? returnUrl = null) =>
         Factory.ClientFor().GetAsync($"{Login}?provider={Uri.EscapeDataString(provider)}" +
@@ -58,6 +63,19 @@ public class ExternalLoginEntryTests : IntegrationTestBase
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Contains("Google, GitHub", await response.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task A_refused_return_address_is_logged_without_the_line_breaks_it_was_sent_with()
+    {
+        var response = await StartAsync("Google", "https://evil.example.test/\r\n2026-01-01 00:00:00 forged entry");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var entry = Assert.Single(_logs.Entries, e => e.Message.StartsWith("Rejected OAuth login with disallowed returnUrl", StringComparison.Ordinal));
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.DoesNotContain('\r', entry.Message);
+        Assert.DoesNotContain('\n', entry.Message);
+        Assert.Contains("forged entry", entry.Message); // the rest of what was sent is still there to read
     }
 
     [Theory]
