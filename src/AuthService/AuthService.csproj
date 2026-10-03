@@ -26,8 +26,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The reaper's steps, run directly by the authorization server's revocation tests. -->
+    <!-- The reapers' steps, run directly by the tests rather than waited for on their hourly loop. -->
     <InternalsVisibleTo Include="AuthService.AuthorizationServer.Tests" />
+    <InternalsVisibleTo Include="AuthService.Tests" />
   </ItemGroup>
 
   <ItemGroup>

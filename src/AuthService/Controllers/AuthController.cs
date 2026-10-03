@@ -328,7 +328,7 @@ public class AuthController(
         try
         {
             var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-            var frontendBaseUrl = _configuration["FrontendBaseUrl"] ?? "http://localhost:3000";
+            var frontendBaseUrl = _configuration.BaseUrl();
             var verificationUrl = $"{frontendBaseUrl}/verify-email" +
                                   $"?token={Uri.EscapeDataString(token)}" +
                                   $"&email={Uri.EscapeDataString(user.Email!)}";
@@ -721,7 +721,7 @@ public class AuthController(
 
             var token = await _userManager.GeneratePasswordResetTokenAsync(user);
 
-            var frontendBaseUrl = _configuration["FrontendBaseUrl"] ?? "http://localhost:3000";
+            var frontendBaseUrl = _configuration.BaseUrl();
             var encodedToken = Uri.EscapeDataString(token);
             var encodedEmail = Uri.EscapeDataString(request.Email);
             var resetUrl = $"{frontendBaseUrl}/reset-password?token={encodedToken}&email={encodedEmail}";

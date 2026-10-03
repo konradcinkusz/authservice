@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using AuthService.AuthorizationServer.Tests.Infrastructure;
 using AuthService.Data;
+using AuthService.Models;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -244,6 +246,65 @@ public class ExternalInteractionTests : IAsyncLifetime
             resource = AuthorizationServerFactory.Resource
         });
         Assert.Equal(HttpStatusCode.OK, confirmed.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("locked", "locked_out")]
+    [InlineData("outdated-terms", "consent_required")]
+    [InlineData("deleted", "account_unavailable")]
+    public async Task The_frontend_vouching_for_a_user_does_not_make_an_account_that_may_not_connect_eligible(string state, string reason)
+    {
+        var (email, api) = await _flow.Backchannel.RegisterAsync();
+        var handle = await StartAsync(_flow.Browser, Pkce.Create(), "ineligible");
+        await _factory.WithScopeAsync(async services =>
+        {
+            var context = services.GetRequiredService<ApplicationDbContext>();
+            var user = await context.Users.SingleAsync(u => u.Email == email);
+            if (state == "locked")
+                user.LockoutEnd = DateTimeOffset.UtcNow.AddHours(1);
+            else if (state == "deleted")
+                user.IsDeleted = true;
+            else
+                foreach (var consent in await context.UserConsents.Where(c => c.UserId == user.Id).ToListAsync())
+                    consent.Version = "2020-01-01";
+            await context.SaveChangesAsync();
+        });
+
+        var response = await DecideAsync(api.AccessToken, handle, "accept");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("account_not_eligible", body.GetProperty("error").GetString());
+        Assert.Equal(reason, body.GetProperty("reason").GetString());
+
+        // Nothing was decided: the interaction is still open for someone who may.
+        var (_, other) = await _flow.Backchannel.RegisterAsync();
+        Assert.Equal(HttpStatusCode.OK, (await InteractionAsync(other.AccessToken, handle)).StatusCode);
+    }
+
+    [Theory]
+    [InlineData("no-such-handle")]
+    [InlineData("0123456789012345678901234567890123456789012345678901234567890123456789")]
+    public async Task A_handle_nobody_was_given_finds_no_interaction_to_read_or_decide(string handle)
+    {
+        var (_, api) = await _flow.Backchannel.RegisterAsync();
+
+        Assert.Equal(HttpStatusCode.NotFound, (await InteractionAsync(api.AccessToken, handle)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await DecideAsync(api.AccessToken, handle, "deny")).StatusCode);
+    }
+
+    [Fact]
+    public async Task A_token_for_an_account_that_no_longer_exists_cannot_decide_anything()
+    {
+        var (email, api) = await _flow.Backchannel.RegisterAsync();
+        var handle = await StartAsync(_flow.Browser, Pkce.Create(), "gone");
+        await _factory.WithScopeAsync(async services =>
+        {
+            var users = services.GetRequiredService<UserManager<ApplicationUser>>();
+            await users.DeleteAsync((await users.FindByEmailAsync(email))!);
+        });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await DecideAsync(api.AccessToken, handle, "accept")).StatusCode);
     }
 
     [Fact]

@@ -373,6 +373,7 @@ public class OrganizationsController(
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<InvitationDto>> InviteMember(string id, [FromBody] InviteMemberRequest request)
     {
         var userId = GetCurrentUserId();
@@ -383,6 +384,12 @@ public class OrganizationsController(
 
         if (membership == null || (membership.Role != OrganizationRole.Owner && membership.Role != OrganizationRole.Admin))
             return Forbid();
+
+        // A deleted organization is disabled until it is restored. The query filter hides it from
+        // Find, so look it up before an invitation is written for it rather than after.
+        var organization = await _context.Organizations.FindAsync(id);
+        if (organization == null)
+            return NotFound(new { error = "Organization not found" });
 
         var existingUser = await _userManager.FindByEmailAsync(request.Email);
 
@@ -434,12 +441,11 @@ public class OrganizationsController(
             targetUserId: existingUser?.Id,
             metadata: new { email = request.Email, role = role.ToString() });
 
-        var organization = await _context.Organizations.FindAsync(id);
         var inviter = await _userManager.FindByIdAsync(userId);
 
         var (success, errorMessage) = await _invitationService.SendInvitationEmailAsync(
             invitation,
-            organization!.Name,
+            organization.Name,
             inviter?.UserName ?? inviter?.Email
         );
 
@@ -453,7 +459,7 @@ public class OrganizationsController(
         var response = new InvitationDto(
             invitation.Id,
             invitation.OrganizationId,
-            organization!.Name,
+            organization.Name,
             invitation.Email,
             invitation.Role.ToString(),
             invitation.CreatedAt,

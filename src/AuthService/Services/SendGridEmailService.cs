@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using SendGrid;
@@ -13,8 +14,27 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
     {
         var apiKey = _configuration["SendGrid:ApiKey"]
             ?? throw new InvalidOperationException("SendGrid:ApiKey is not configured.");
-        return new SendGridClient(apiKey);
+        return NewClient(apiKey);
     }
+
+    /// <summary>
+    /// A message SendGrid refused was not sent, and the caller is told so: callers record what became
+    /// of an email (an invitation's delivery status and the pause before a resend) and read a call
+    /// that returns as one that worked. The provider's own words stay in the log; this message can
+    /// reach people who administer an organization but not this deployment.
+    /// </summary>
+    private static InvalidOperationException Refused(HttpStatusCode status) =>
+        new($"The email provider refused the message (HTTP {(int)status}).");
+
+    /// <summary>The client that talks to SendGrid. Replaced in tests so that no message leaves the machine.</summary>
+    protected virtual ISendGridClient NewClient(string apiKey) => new SendGridClient(apiKey);
+
+    /// <summary>
+    /// Text placed in the HTML part of a message. Some of it is typed by users: an organization's
+    /// name is whatever its creator chose, and the email carrying it comes from this service's own
+    /// address, so unencoded it is a way to put a stranger's markup and links in front of the recipient.
+    /// </summary>
+    private static string Html(string? text) => WebUtility.HtmlEncode(text ?? string.Empty);
 
     private EmailAddress GetFromAddress()
     {
@@ -32,8 +52,8 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
         var subject = $"You've been invited to join {organizationName}";
         var inviter = string.IsNullOrWhiteSpace(inviterName) ? "A team member" : inviterName;
         var plainText = $"{inviter} has invited you to join {organizationName}.\n\nYour invitation token: {invitationToken}";
-        var html = $"<p><strong>{inviter}</strong> has invited you to join <strong>{organizationName}</strong>.</p>" +
-                   $"<p>Your invitation token: <code>{invitationToken}</code></p>";
+        var html = $"<p><strong>{Html(inviter)}</strong> has invited you to join <strong>{Html(organizationName)}</strong>.</p>" +
+                   $"<p>Your invitation token: <code>{Html(invitationToken)}</code></p>";
 
         var msg = MailHelper.CreateSingleEmail(from, to, subject, plainText, html);
         var response = await client.SendEmailAsync(msg);
@@ -43,6 +63,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send invitation email to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {
@@ -58,7 +79,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
         const string subject = "Reset your password";
         var plainText = $"Click the link below to reset your password:\n\n{resetUrl}\n\nIf you did not request a password reset, please ignore this email.";
         var html = $"<p>Click the link below to reset your password:</p>" +
-                   $"<p><a href=\"{resetUrl}\">Reset Password</a></p>" +
+                   $"<p><a href=\"{Html(resetUrl)}\">Reset Password</a></p>" +
                    $"<p>If you did not request a password reset, please ignore this email.</p>";
 
         var msg = MailHelper.CreateSingleEmail(from, to, subject, plainText, html);
@@ -69,6 +90,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send password reset email to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {
@@ -83,7 +105,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
         var to = new EmailAddress(toEmail);
         var subject = $"Your account was linked to {providerName}";
         var plainText = $"Your {AppName} account has been linked to {providerName}.\n\nIf you did not do this, please contact support immediately.";
-        var html = $"<p>Your <strong>{AppName}</strong> account has been linked to <strong>{providerName}</strong>.</p>" +
+        var html = $"<p>Your <strong>{Html(AppName)}</strong> account has been linked to <strong>{Html(providerName)}</strong>.</p>" +
                    $"<p>If you did not do this, please contact support immediately.</p>";
 
         var msg = MailHelper.CreateSingleEmail(from, to, subject, plainText, html);
@@ -94,6 +116,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send OAuth linked notification to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {
@@ -109,8 +132,8 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
         var subject = $"Verify your email address for {AppName}";
         var plainText = $"Confirm this address to finish setting up your {AppName} account:\n\n{verificationUrl}\n\n" +
                         "If you did not create this account, you can safely ignore this email.";
-        var html = $"<p>Confirm this address to finish setting up your <strong>{AppName}</strong> account:</p>" +
-                   $"<p><a href=\"{verificationUrl}\">Verify email address</a></p>" +
+        var html = $"<p>Confirm this address to finish setting up your <strong>{Html(AppName)}</strong> account:</p>" +
+                   $"<p><a href=\"{Html(verificationUrl)}\">Verify email address</a></p>" +
                    $"<p>If you did not create this account, you can safely ignore this email.</p>";
 
         var msg = MailHelper.CreateSingleEmail(from, to, subject, plainText, html);
@@ -121,6 +144,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send verification email to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {
@@ -135,8 +159,8 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
         var to = new EmailAddress(toEmail);
         var subject = $"Welcome to {AppName}!";
         var plainText = $"Hi {userName},\n\nWelcome to {AppName}! Your account has been created successfully.\n\nIf you did not create this account, please contact support immediately.";
-        var html = $"<p>Hi <strong>{userName}</strong>,</p>" +
-                   $"<p>Welcome to <strong>{AppName}</strong>! Your account has been created successfully.</p>" +
+        var html = $"<p>Hi <strong>{Html(userName)}</strong>,</p>" +
+                   $"<p>Welcome to <strong>{Html(AppName)}</strong>! Your account has been created successfully.</p>" +
                    $"<p>If you did not create this account, please contact support immediately.</p>";
 
         var msg = MailHelper.CreateSingleEmail(from, to, subject, plainText, html);
@@ -147,6 +171,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send welcome email to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {

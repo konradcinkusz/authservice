@@ -96,6 +96,34 @@ than a pile of mocks. Start from `IntegrationTestBase`.
 Pin the behaviour that matters, not the shape of the JSON. A test asserting that a locked
 account cannot refresh its session is worth ten asserting field ordering.
 
+`tests/AuthService.Tests/Infrastructure` has what most tests need, so a test reads as what
+happens rather than as set-up:
+
+- `Factory.CreateAccountAsync(role)` registers an account (and gives it a platform role) and
+  returns its tokens; `Factory.ClientFor(tokens)` is a client of its own for each person in the
+  test, so one test can act as several people.
+- `Factory.CreateTeamAsync()` is an organization with an Owner, an Admin, a Member and someone
+  outside it, one client each. The capability tables in `docs/roles.md` are the oracle for
+  these tests: write one case per row.
+- `Factory.Emails` is what would have been emailed. Follow a reset, verification or invitation
+  link the way a user would, from the token in the message.
+- `Factory.AuditAsync(action)` reads the audit rows, and `Factory.WithScopeAsync` reaches the
+  database for the states the API cannot produce (an expired invitation, a locked account).
+- A test class sets host settings with `Settings` and replaces services with `ConfigureServices`.
+  Settings reach what the application reads at startup too, unless an environment variable or
+  `appsettings.json` already gives the key a value.
+
+To see what the tests do not reach, collect coverage and read the missed lines rather than the
+percentage. What is left is mostly startup guards in `Program.cs`, EF design-time tooling,
+record-only DTOs, glue that only runs at shutdown, the `catch` around a background service's loop,
+and the validation branches `[ApiController]` makes unreachable; read the lines before writing a
+test for one:
+
+```bash
+dotnet tool install --global dotnet-coverage
+dotnet-coverage collect -f cobertura "dotnet test tests/AuthService.Tests --no-build"
+```
+
 ## Schema changes
 
 Each provider has a committed migration set, and CI fails while the model and either set

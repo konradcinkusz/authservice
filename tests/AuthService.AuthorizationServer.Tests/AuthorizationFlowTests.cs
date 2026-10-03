@@ -736,6 +736,68 @@ public class ExternalProviderReturnTests : IAsyncLifetime
         Assert.True(AuthorizationFlowClient.IsLocalRedirect(landing, "/connect/2fa"), await AuthorizationFlowClient.DescribeAsync(landing));
     }
 
+    private static async Task<string> ReadReturnErrorAsync(HttpResponseMessage landing)
+    {
+        Assert.Equal(HttpStatusCode.OK, landing.StatusCode);
+        var html = await landing.Content.ReadAsStringAsync();
+        var match = System.Text.RegularExpressions.Regex.Match(html, "data-testid=\"external-return-error\">([^<]*)<");
+        Assert.True(match.Success, html);
+
+        return WebUtility.HtmlDecode(match.Groups[1].Value);
+    }
+
+    [Fact]
+    public async Task A_return_without_a_code_asks_to_start_again()
+    {
+        using var flow = new AuthorizationFlowClient(_factory);
+        var (_, nonce) = await StartProviderSignInAsync(flow, Pkce.Create());
+
+        var landing = await flow.Browser.GetAsync($"/oauth/callback?resume={nonce}");
+
+        Assert.Contains("did not complete the sign-in", await ReadReturnErrorAsync(landing), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_code_nobody_issued_has_expired()
+    {
+        using var flow = new AuthorizationFlowClient(_factory);
+        var (_, nonce) = await StartProviderSignInAsync(flow, Pkce.Create());
+
+        var landing = await flow.Browser.GetAsync($"/oauth/callback?resume={nonce}&code=never-issued");
+
+        Assert.Contains("has expired", await ReadReturnErrorAsync(landing), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_return_for_an_account_that_cannot_sign_in_says_why()
+    {
+        using var flow = new AuthorizationFlowClient(_factory);
+        var (email, _) = await flow.Backchannel.RegisterAsync();
+        await _factory.WithScopeAsync(async services =>
+        {
+            var users = services.GetRequiredService<UserManager<ApplicationUser>>();
+            var user = (await users.FindByEmailAsync(email))!;
+            user.LockoutEnd = DateTimeOffset.UtcNow.AddHours(1);
+            await users.UpdateAsync(user);
+        });
+        var (_, nonce) = await StartProviderSignInAsync(flow, Pkce.Create());
+
+        var landing = await flow.Browser.GetAsync($"/oauth/callback?resume={nonce}&code={await IssueExchangeCodeAsync(email)}");
+
+        Assert.Contains("temporarily locked", await ReadReturnErrorAsync(landing), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_return_in_a_browser_that_never_started_a_sign_in_is_refused()
+    {
+        using var flow = new AuthorizationFlowClient(_factory);
+        var (email, _) = await flow.Backchannel.RegisterAsync();
+
+        var landing = await flow.Browser.GetAsync($"/oauth/callback?resume=whatever&code={await IssueExchangeCodeAsync(email)}");
+
+        Assert.Contains("not started in this browser", await ReadReturnErrorAsync(landing), StringComparison.Ordinal);
+    }
+
     /// <summary>Opens the sign-in page and takes its provider button; returns where it leads, and the nonce it carries.</summary>
     private static async Task<(Uri ProviderLogin, string Nonce)> StartProviderSignInAsync(AuthorizationFlowClient flow, Pkce pkce)
     {

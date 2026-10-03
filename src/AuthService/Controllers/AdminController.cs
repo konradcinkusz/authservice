@@ -21,6 +21,7 @@ namespace AuthService.Controllers;
 [Authorize(Roles = "Admin,SuperAdmin")]
 public class AdminController(
     UserManager<ApplicationUser> _userManager,
+    RoleManager<IdentityRole> _roleManager,
     ApplicationDbContext _context,
     ITokenService _tokenService,
     IAuditService _audit,
@@ -191,6 +192,10 @@ public class AdminController(
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null)
             return NotFound(new { error = "User not found" });
+
+        // Identity throws for a role that does not exist, which would surface as a 500.
+        if (!await _roleManager.RoleExistsAsync(request.Role))
+            return BadRequest(new { error = $"Unknown role '{request.Role}'" });
 
         if (await _userManager.IsInRoleAsync(user, request.Role))
             return BadRequest(new { error = $"User already has role '{request.Role}'" });
