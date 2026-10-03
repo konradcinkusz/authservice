@@ -17,6 +17,15 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
         return NewClient(apiKey);
     }
 
+    /// <summary>
+    /// A message SendGrid refused was not sent, and the caller is told so: callers record what became
+    /// of an email (an invitation's delivery status and the pause before a resend) and read a call
+    /// that returns as one that worked. The provider's own words stay in the log; this message can
+    /// reach people who administer an organization but not this deployment.
+    /// </summary>
+    private static InvalidOperationException Refused(HttpStatusCode status) =>
+        new($"The email provider refused the message (HTTP {(int)status}).");
+
     /// <summary>The client that talks to SendGrid. Replaced in tests so that no message leaves the machine.</summary>
     protected virtual ISendGridClient NewClient(string apiKey) => new SendGridClient(apiKey);
 
@@ -54,6 +63,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send invitation email to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {
@@ -80,6 +90,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send password reset email to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {
@@ -105,6 +116,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send OAuth linked notification to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {
@@ -132,6 +144,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send verification email to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {
@@ -158,6 +171,7 @@ public class SendGridEmailService(IConfiguration _configuration, ILogger<SendGri
             var body = await response.Body.ReadAsStringAsync();
             _logger.LogError("SendGrid failed to send welcome email to {Email}. Status: {Status}. Body: {Body}",
                 toEmail, response.StatusCode, body);
+            throw Refused(response.StatusCode);
         }
         else
         {
