@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -24,10 +25,12 @@ public abstract class IntegrationTestBase : IAsyncLifetime
     }
 
     /// <summary>
-    /// Settings this class wants different from the environment-wide defaults. Applied as host
-    /// settings, so they reach anything the application reads from configuration while serving
-    /// a request; the ones it reads while starting up (signing keys, the database) need
-    /// <see cref="ConfigureServices"/> or the process environment instead.
+    /// Settings this class wants different from the environment-wide defaults. They are host
+    /// settings, which the application sees while it starts up, and an in-memory source added
+    /// last, which wins over the process environment for everything it reads after that. A
+    /// setting the application reads while starting up and that the process environment already
+    /// gives a value (signing keys, the database) still needs <see cref="ConfigureServices"/> or
+    /// the process environment itself.
     /// </summary>
     protected virtual IReadOnlyDictionary<string, string?> Settings => new Dictionary<string, string?>();
 
@@ -60,6 +63,7 @@ public abstract class IntegrationTestBase : IAsyncLifetime
             foreach (var (key, value) in settings)
                 builder.UseSetting(key, value);
 
+            builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(settings));
             builder.ConfigureTestServices(configure);
         }
     }
