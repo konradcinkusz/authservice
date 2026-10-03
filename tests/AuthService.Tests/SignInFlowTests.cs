@@ -71,9 +71,14 @@ public class SignInFlowTests : IntegrationTestBase
         await Factory.WithScopeAsync(async services =>
         {
             var context = services.GetRequiredService<ApplicationDbContext>();
+            List<ConsentType> notCurrent = [];
+            if (!termsCurrent)
+                notCurrent.Add(ConsentType.Terms);
+            if (!privacyCurrent)
+                notCurrent.Add(ConsentType.Privacy);
+
             var outOfDate = await context.UserConsents
-                .Where(c => c.UserId == account.Id &&
-                            ((c.Type == ConsentType.Terms && !termsCurrent) || (c.Type == ConsentType.Privacy && !privacyCurrent)))
+                .Where(c => c.UserId == account.Id && notCurrent.Contains(c.Type))
                 .ToListAsync();
             foreach (var row in outOfDate)
                 row.Version = "2020-01-01";
