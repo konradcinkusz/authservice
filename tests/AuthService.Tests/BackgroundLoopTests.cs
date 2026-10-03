@@ -200,9 +200,11 @@ public class ReaperLoopTests
     public async Task Stopping_before_the_schema_is_ready_ends_the_service_without_a_pass()
     {
         var scopes = new FailingScopeFactory();
-        using var reaper = new UserCleanupService(scopes, new ListLogger<UserCleanupService>(), new MigrationCompletionSignal());
+        var signal = new ParkedSignal();
+        using var reaper = new UserCleanupService(scopes, new ListLogger<UserCleanupService>(), signal);
 
         await reaper.StartAsync(CancellationToken.None);
+        await signal.Waiting.WaitAsync(TimeSpan.FromSeconds(30));
         await reaper.StopAsync(CancellationToken.None);
 
         Assert.True(reaper.ExecuteTask!.IsCompleted);

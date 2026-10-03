@@ -97,9 +97,13 @@ public class ClientSyncServiceTests
     public async Task Stopping_while_it_waits_for_the_schema_is_a_clean_stop_and_not_an_error()
     {
         using var factory = await HostWithAnEmptySchemaAsync();
-        using var service = NewService(factory, new MigrationCompletionSignal());
+        var signal = new NeverCompletingSignal();
+        using var service = NewService(factory, signal);
         await service.StartAsync(CancellationToken.None);
 
+        // The host starts the service on a background thread, so stopping straight away could cancel
+        // it before it ever waited, and nothing would have been tested.
+        await signal.Waiting.WaitAsync(TimeSpan.FromSeconds(30));
         await service.StopAsync(CancellationToken.None);
 
         Assert.True(service.ExecuteTask!.IsCompleted);
@@ -138,6 +142,27 @@ public class ClientSyncServiceTests
         await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.DoesNotContain(factory.Logs.Entries, IsClientSyncError);
+    }
+
+    /// <summary>A schema that never arrives, which says when something has started to wait for it.</summary>
+    private sealed class NeverCompletingSignal : IMigrationCompletionSignal
+    {
+        private readonly TaskCompletionSource _waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Waiting => _waiting.Task;
+
+        public Task WaitAsync(CancellationToken cancellationToken = default)
+        {
+            _waiting.TrySetResult();
+
+            return Task.Delay(Timeout.Infinite, cancellationToken);
+        }
+
+        public void SetCompleted()
+        {
+        }
+
+        public bool IsCompleted => false;
     }
 
     private sealed class FailingSignal(Exception failure) : IMigrationCompletionSignal
