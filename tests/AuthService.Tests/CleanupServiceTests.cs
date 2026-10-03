@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using AuthService.Data;
+using AuthService.Extensions;
 using AuthService.Models;
 using AuthService.Services;
 using AuthService.Tests.Infrastructure;
@@ -95,16 +96,38 @@ public class AccountCleanupTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task One_account_that_cannot_be_deleted_does_not_hold_up_the_rest()
+    {
+        var stuck = await Factory.CreateAccountAsync();
+        var other = await Factory.CreateAccountAsync();
+        await ScheduleDeletionAsync(stuck.Email, DateTime.UtcNow.AddDays(-2));
+        await ScheduleDeletionAsync(other.Email, DateTime.UtcNow.AddMinutes(-1));
+        await Factory.MakeUndeletableAsync("AspNetUsers", stuck.Id);
+
+        await NewReaper().CleanupExpiredUsersAsync(CancellationToken.None);
+
+        Assert.True(await ExistsAsync(stuck.Email));
+        Assert.False(await ExistsAsync(other.Email));
+    }
+
+    [Fact]
     public async Task The_service_runs_a_pass_as_soon_as_it_starts_and_stops_when_asked()
     {
         var account = await Factory.CreateAccountAsync();
         await ScheduleDeletionAsync(account.Email, DateTime.UtcNow.AddMinutes(-1));
-        using var reaper = NewReaper();
+        var log = new ListLogger<UserCleanupService>();
+        using var reaper = new UserCleanupService(
+            Factory.Services.GetRequiredService<IServiceScopeFactory>(), log, Factory.Services.GetRequiredService<IMigrationCompletionSignal>());
 
         await reaper.StartAsync(CancellationToken.None);
-        await TestWait.UntilAsync(async () => !await ExistsAsync(account.Email), "the first pass has deleted the account");
-
+        // Waits on its log, not on the database: the in-memory test database is one connection,
+        // and the service and this thread must not use it at the same time.
+        await TestWait.UntilAsync(() => Task.FromResult(log.Messages.Any(m => m.Contains("Permanently deleted user account"))),
+            "the first pass has deleted the account");
         await reaper.StopAsync(CancellationToken.None);
+
+        Assert.False(await ExistsAsync(account.Email));
+        Assert.True(reaper.ExecuteTask!.IsCompleted);
     }
 
     [Fact]
@@ -195,16 +218,38 @@ public class OrganizationCleanupTests : IntegrationTestBase
     }
 
     [Fact]
+    public async Task One_organization_that_cannot_be_deleted_does_not_hold_up_the_rest()
+    {
+        var owner = Factory.ClientFor((await Factory.CreateAccountAsync()).Tokens);
+        var stuck = await owner.CreateOrganizationAsync("Stuck");
+        var other = await owner.CreateOrganizationAsync("Other");
+        await ScheduleDeletionAsync(stuck, deleted: true, DateTime.UtcNow.AddDays(-2));
+        await ScheduleDeletionAsync(other, deleted: true, DateTime.UtcNow.AddMinutes(-1));
+        await Factory.MakeUndeletableAsync("Organizations", stuck);
+
+        await NewReaper().CleanupExpiredOrganizationsAsync(CancellationToken.None);
+
+        Assert.NotNull(await Factory.StoredOrganizationAsync(stuck));
+        Assert.Null(await Factory.StoredOrganizationAsync(other));
+    }
+
+    [Fact]
     public async Task The_service_runs_a_pass_as_soon_as_it_starts_and_stops_when_asked()
     {
         var team = await Factory.CreateTeamAsync();
         await ScheduleDeletionAsync(team.Id, deleted: true, DateTime.UtcNow.AddMinutes(-1));
-        using var reaper = NewReaper();
+        var log = new ListLogger<OrganizationCleanupService>();
+        using var reaper = new OrganizationCleanupService(
+            Factory.Services.GetRequiredService<IServiceScopeFactory>(), log, Factory.Services.GetRequiredService<IMigrationCompletionSignal>());
 
         await reaper.StartAsync(CancellationToken.None);
-        await TestWait.UntilAsync(async () => await Factory.StoredOrganizationAsync(team.Id) is null,
+        // Waits on its log, not on the database: the in-memory test database is one connection,
+        // and the service and this thread must not use it at the same time.
+        await TestWait.UntilAsync(() => Task.FromResult(log.Messages.Any(m => m.Contains("Permanently deleted organization"))),
             "the first pass has deleted the organization");
-
         await reaper.StopAsync(CancellationToken.None);
+
+        Assert.Null(await Factory.StoredOrganizationAsync(team.Id));
+        Assert.True(reaper.ExecuteTask!.IsCompleted);
     }
 }
