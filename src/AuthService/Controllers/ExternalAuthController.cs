@@ -105,7 +105,10 @@ public class ExternalAuthController(
     {
         var postLoginBase = _configuration["OAuth:PostLoginRedirectBaseUrl"]
             ?? throw new InvalidOperationException("OAuth:PostLoginRedirectBaseUrl is not configured.");
-        var errorRedirectBase = $"{_configuration["OAuth:ErrorRedirectBaseUrl"] ?? postLoginBase}/login";
+        // appsettings.json ships ErrorRedirectBaseUrl as "", which `??` would take as an answer and
+        // send every failure to /login on this service's own host instead of the frontend's.
+        var errorBase = _configuration["OAuth:ErrorRedirectBaseUrl"];
+        var errorRedirectBase = $"{(string.IsNullOrWhiteSpace(errorBase) ? postLoginBase : errorBase)}/login";
 
         var info = await _signInManager.GetExternalLoginInfoAsync();
         if (info == null)

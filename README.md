@@ -169,6 +169,7 @@ Optional:
 | `OAuth:GitHub:ClientId` / `ClientSecret` | Enables GitHub login when both are set |
 | `OAuth:CallbackBaseUrl` | Public base URL the OAuth provider redirects back to |
 | `OAuth:PostLoginRedirectBaseUrl` | Frontend URL to redirect to after login |
+| `OAuth:ErrorRedirectBaseUrl` | Frontend URL a failed social sign-in ends on (`<it>/login?error=…`). Unset or blank it is `OAuth:PostLoginRedirectBaseUrl` |
 | `SendGrid:ApiKey` / `FromEmail` / `FromName` | Enables real email delivery; otherwise emails are only logged |
 | `App:Name` | Product name used in email templates and on the MCP sign-in and consent pages (default: "Auth Service") |
 | `FrontendBaseUrl` | Where your frontend lives. The password-reset and email-verification links in emails are built on it (`<it>/reset-password?token=…`), and the MCP sign-in pages link to it. Unset or blank it is `http://localhost:3000`, which is only right for local development, so set it wherever email is delivered |
