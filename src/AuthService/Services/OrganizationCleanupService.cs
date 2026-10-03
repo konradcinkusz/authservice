@@ -48,7 +48,7 @@ public class OrganizationCleanupService : BackgroundService
         _logger.LogInformation("Organization cleanup service stopped");
     }
 
-    private async Task CleanupExpiredOrganizationsAsync(CancellationToken cancellationToken)
+    internal async Task CleanupExpiredOrganizationsAsync(CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();

@@ -5,6 +5,8 @@ namespace AuthService.Tests.Infrastructure;
 
 public static class AccessTokenClaims
 {
+    private const string RoleClaim = "http://schemas.microsoft.com/ws/2008/06/identity/claims/role";
+
     /// <summary>
     /// The payload of an access token as the service wrote it. Nothing is validated: a test that
     /// calls this is reading what was put in the token, not deciding whether to trust it.
@@ -25,5 +27,18 @@ public static class AccessTokenClaims
         return payload.RootElement.TryGetProperty($"organization:{organizationId}:role", out var role)
             ? role.GetString()
             : null;
+    }
+
+    /// <summary>The platform roles the token carries. The claim is a string for one role and an array for several.</summary>
+    public static IReadOnlyList<string> Roles(this TestTokens tokens)
+    {
+        using var payload = tokens.Payload();
+
+        if (!payload.RootElement.TryGetProperty(RoleClaim, out var role))
+            return [];
+
+        return role.ValueKind == JsonValueKind.Array
+            ? role.EnumerateArray().Select(r => r.GetString()!).ToList()
+            : [role.GetString()!];
     }
 }
