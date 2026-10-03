@@ -92,8 +92,8 @@ public class ProviderEmailVerifier(
         if (string.IsNullOrWhiteSpace(accessToken))
         {
             _logger.LogWarning(
-                "No GitHub access token available to verify {Email}. SaveTokens must be enabled on the GitHub handler.",
-                email);
+                "No GitHub access token available to verify the address of GitHub user {ProviderKey}. SaveTokens must be enabled on the GitHub handler.",
+                info.ProviderKey);
             return new ProviderEmailVerification(false, "no_access_token");
         }
 
@@ -109,8 +109,8 @@ public class ProviderEmailVerifier(
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("GitHub /user/emails returned {Status} while verifying {Email}",
-                    response.StatusCode, email);
+                _logger.LogWarning("GitHub /user/emails returned {Status} while verifying the address of GitHub user {ProviderKey}",
+                    response.StatusCode, info.ProviderKey);
                 return new ProviderEmailVerification(false, "emails_endpoint_failed");
             }
 
@@ -135,7 +135,7 @@ public class ProviderEmailVerifier(
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to verify GitHub email {Email}", email);
+            _logger.LogError(ex, "Failed to verify the address of GitHub user {ProviderKey}", info.ProviderKey);
             return new ProviderEmailVerification(false, "verification_error");
         }
     }

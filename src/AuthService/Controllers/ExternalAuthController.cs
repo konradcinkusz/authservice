@@ -69,7 +69,8 @@ public class ExternalAuthController(
         // where a crafted returnUrl could cause the exchange code to be sent to an attacker's server.
         if (returnUrl != null && !IsAllowedReturnUrl(returnUrl, allAllowedBaseUrls))
         {
-            _logger.LogWarning("Rejected OAuth login with disallowed returnUrl: {ReturnUrl}", returnUrl);
+            // The value is whatever the caller sent: a line break in it would start a line of its own in the log.
+            _logger.LogWarning("Rejected OAuth login with disallowed returnUrl: {ReturnUrl}", returnUrl.Replace("\r", "").Replace("\n", ""));
             return BadRequest(new { error = "returnUrl is not from an allowed origin." });
         }
 
