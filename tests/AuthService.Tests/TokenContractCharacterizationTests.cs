@@ -82,6 +82,46 @@ public class TokenContractCharacterizationTests : IntegrationTestBase
         Assert.Equal(["Admin", "User"], roles.EnumerateArray().Select(r => r.GetString()!).Order());
     }
 
+    [Fact]
+    public async Task A_verified_account_carries_email_verified_as_a_json_boolean()
+    {
+        var (email, _) = await Client.RegisterAsync();
+
+        var tokens = await LoginAsync(email);
+
+        using var payload = DecodeSegment(tokens.AccessToken, 1);
+        Assert.Equal(JsonValueKind.True, payload.RootElement.GetProperty("email_verified").ValueKind);
+    }
+
+    [Fact]
+    public async Task An_unverified_account_carries_email_verified_false()
+    {
+        var (email, _) = await Client.RegisterAsync();
+        await SetEmailConfirmedAsync(email, confirmed: false);
+
+        var tokens = await LoginAsync(email);
+
+        using var payload = DecodeSegment(tokens.AccessToken, 1);
+        Assert.Equal(JsonValueKind.False, payload.RootElement.GetProperty("email_verified").ValueKind);
+    }
+
+    [Fact]
+    public async Task Refresh_reflects_the_verification_state_at_the_time_of_the_refresh()
+    {
+        var (email, _) = await Client.RegisterAsync();
+        await SetEmailConfirmedAsync(email, confirmed: false);
+        var login = await LoginAsync(email);
+
+        // The address is confirmed after the session started; the refreshed token shows it.
+        await SetEmailConfirmedAsync(email, confirmed: true);
+        var response = await Client.PostAsJsonAsync("/api/v1/auth/refresh", new { refreshToken = login.RefreshToken });
+        response.EnsureSuccessStatusCode();
+        var refreshed = (await response.Content.ReadFromJsonAsync<TestTokens>(TestData.Json))!;
+
+        using var payload = DecodeSegment(refreshed.AccessToken, 1);
+        Assert.Equal(JsonValueKind.True, payload.RootElement.GetProperty("email_verified").ValueKind);
+    }
+
     private static void AssertContract(TestTokens tokens, string userId, string organizationId, string[] expectedRoles)
     {
         Assert.Equal("Bearer", tokens.TokenType);
@@ -105,9 +145,11 @@ public class TokenContractCharacterizationTests : IntegrationTestBase
         [
             "sub", "email", "jti", NameIdentifier, Name, Role,
             "organization", $"organization:{organizationId}:role",
+            "email_verified",
             "exp", "iss", "aud"
         ];
         Assert.Equal(expectedNames.Order(), root.EnumerateObject().Select(p => p.Name).Order());
+        Assert.Equal(JsonValueKind.True, root.GetProperty("email_verified").ValueKind);
 
         Assert.Equal(userId, root.GetProperty("sub").GetString());
         Assert.Equal(userId, root.GetProperty(NameIdentifier).GetString());
@@ -155,6 +197,17 @@ public class TokenContractCharacterizationTests : IntegrationTestBase
         var response = await Client.PostAsJsonAsync("/api/v1/auth/login", new { email, password = TestData.ValidPassword });
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<TestTokens>(TestData.Json))!;
+    }
+
+    private async Task SetEmailConfirmedAsync(string email, bool confirmed)
+    {
+        await Factory.WithScopeAsync(async services =>
+        {
+            var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
+            var user = await userManager.FindByEmailAsync(email);
+            user!.EmailConfirmed = confirmed;
+            (await userManager.UpdateAsync(user)).ThrowIfFailed();
+        });
     }
 
     /// <summary>Turns on two-factor sign-in and returns one recovery code to complete it with.</summary>
