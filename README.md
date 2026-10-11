@@ -395,6 +395,13 @@ Downstream services validate the JWTs this service issues without calling back i
 AuthService — organization membership and role are embedded as claims (`organization`,
 `organization:{id}:role`).
 
+Access tokens also carry `email_verified` (a JSON boolean, the OIDC claim name), taken from
+the account's confirmed-email flag when the token is issued. It is `true` once the address
+has been confirmed, `false` otherwise, and it is present on login, two-factor and external
+sign-in tokens and on refreshed tokens alike. It reflects the state at issuance, so a
+confirmation made during a session shows up at the next refresh, not immediately. The claim
+is only as strong as the signature that carries it: validate the token before trusting it.
+
 Under RS256 a consumer needs no key material at all, only this service's URL:
 
 ```csharp

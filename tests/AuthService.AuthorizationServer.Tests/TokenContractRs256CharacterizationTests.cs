@@ -107,9 +107,11 @@ public class TokenContractRs256CharacterizationTests : IAsyncLifetime
         [
             "sub", "email", "jti", NameIdentifier, Name, Role,
             "organization", $"organization:{organizationId}:role",
+            "email_verified",
             "exp", "iss", "aud"
         ];
         Assert.Equal(expectedNames.Order(StringComparer.Ordinal), root.PropertyNames());
+        Assert.Equal(JsonValueKind.True, root.GetProperty("email_verified").ValueKind);
         Assert.Equal(userId, root.GetProperty("sub").GetString());
         Assert.Equal(userId, root.GetProperty(NameIdentifier).GetString());
         Assert.Equal("Admin", root.GetProperty(Role).GetString());

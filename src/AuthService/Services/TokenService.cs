@@ -220,6 +220,12 @@ public class TokenService(
     private async Task<TokenResponse> IssueAsync(ApplicationUser user, string familyId, RefreshToken? rotatedFrom)
     {
         var claims = await BuildClaimsAsync(user);
+
+        // Added here rather than in BuildClaimsAsync: that builder also feeds the MCP authorization
+        // server's tokens, whose claim set is pinned by ADR 0005. Login, 2FA, external sign-in and
+        // refresh all come through here, so every session token carries the current value.
+        claims.Add(new Claim("email_verified", user.EmailConfirmed ? "true" : "false", ClaimValueTypes.Boolean));
+
         var accessToken = GenerateAccessToken(claims);
         var refreshToken = GenerateRefreshToken();
 
