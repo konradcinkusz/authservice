@@ -37,7 +37,7 @@
          Microsoft.EntityFrameworkCore, so the Design package belongs in the startup project
          where `dotnet ef` looks for it, not here.) -->
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="11.0.0" />
     <PackageReference Include="OpenIddict.EntityFrameworkCore" Version="7.7.1" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.23.0" />
   </ItemGroup>
