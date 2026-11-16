@@ -7,7 +7,7 @@ EXPOSE 8080
 
 # Pinned to the *build* platform rather than the target: emulating an SDK build under QEMU to
 # produce an arm64 image takes an order of magnitude longer than cross-compiling with -a.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 ARG TARGETARCH
 WORKDIR /src
 
